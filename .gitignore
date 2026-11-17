@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+data/
+imports/
+storage/
+tmp/
+.reference-repos/
+__pycache__/
+build/
+.build/
+.publish/
+.venv/
+*.egg-info/

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronicle-workbench"
+version = "0.2.0.dev0"
+description = "A local-first project communication archive for WeChat"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+mac = ["pilk==0.2.4"]
+
+[project.urls]
+Homepage = "https://github.com/Immutable1407/Chronicle"
+Issues = "https://github.com/Immutable1407/Chronicle/issues"
+
+[project.scripts]
+chronicle = "chronicle.launch:main"
+
+[tool.setuptools.packages.find]
+include = ["chronicle*"]
+
+[tool.setuptools.package-data]
+chronicle = ["web/*.html", "web/*.css", "web/*.js"]

@@ -1,0 +1,7 @@
+{
+  "name": "choose-your-provider",
+  "endpoint": "https://replace.example/v1/audio/transcriptions",
+  "model": "choose-a-supported-model",
+  "key_env": "CHRONICLE_ASR_API_KEY",
+  "fields": {}
+}
