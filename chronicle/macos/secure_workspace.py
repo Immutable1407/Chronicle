@@ -23,10 +23,22 @@ def run(args,password=None,timeout=180):
     return result.stdout
 
 
-def mounted(image):
+def image_info(image):
+    image=Path(image).expanduser().resolve()
     value=plistlib.loads(run(['info','-plist']))
-    for item in value.get('images',[]):
-        if Path(item.get('image-path','/not-an-image')).resolve()!=image:continue
+    return next((item for item in value.get('images',[]) if Path(item.get('image-path','/not-an-image')).resolve()==image),None)
+
+
+def is_encrypted(image):
+    current=image_info(image)
+    # hdiutil isencrypted cannot open a backing image already held by the OS.
+    if current is not None:return current.get('image-encrypted') is True
+    return plistlib.loads(run(['isencrypted','-plist',str(image)])).get('encrypted') is True
+
+
+def mounted(image):
+    item=image_info(image)
+    if item is not None:
         entities=item.get('system-entities',[])
         mount=next((Path(e['mount-point']) for e in entities if e.get('mount-point')),None)
         device=next((e['dev-entry'] for e in entities if e.get('dev-entry')),None)
@@ -53,8 +65,7 @@ class EncryptedWorkspace:
         self.mount=None;self.device=None;self.lock=None;self.detach_on_close=False
     def __enter__(self):
         if not self.image.is_dir() or self.image.suffix!='.sparsebundle':raise ValueError('encrypted_workspace_image_required')
-        info=plistlib.loads(run(['isencrypted','-plist',str(self.image)]))
-        if info.get('encrypted') is not True:raise ValueError('workspace_image_not_encrypted')
+        if not is_encrypted(self.image):raise ValueError('workspace_image_not_encrypted')
         self.lock,target=image_lock(self.image)
         try:
             existing=mounted(self.image)
@@ -118,7 +129,7 @@ def open_workspace(image,port=0,open_browser=True):
     image=Path(image).expanduser().resolve()
     from ..launch import main as launch,reopen
     if not image.is_dir() or image.suffix!='.sparsebundle':raise ValueError('encrypted_workspace_image_required')
-    if plistlib.loads(run(['isencrypted','-plist',str(image)])).get('encrypted') is not True:raise ValueError('workspace_image_not_encrypted')
+    if not is_encrypted(image):raise ValueError('workspace_image_not_encrypted')
     current=mounted(image)
     if current:
         marker=current[0]/MARKER
@@ -173,7 +184,9 @@ def backup(image,output):
 
 
 def lock_workspace(image):
-    image=Path(image).expanduser().resolve();descriptor,_=image_lock(image)
+    image=Path(image).expanduser().resolve()
+    if not is_encrypted(image):raise ValueError('workspace_image_not_encrypted')
+    descriptor,_=image_lock(image)
     try:
         current=mounted(image)
         if current:
