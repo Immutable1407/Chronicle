@@ -57,6 +57,16 @@ class ReaderBoundaries(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'database_replaced_or_key_stale'):
             reader.open('session/session.db')
 
+    def test_account_identity_uses_own_contact_instead_of_another_contact(self):
+        username=self.root.parent.name
+        self.database('contact/contact.db',[
+            'CREATE TABLE contact (username TEXT,nick_name TEXT,alias TEXT)',
+            "INSERT INTO contact VALUES ('someone-else','别人的昵称','other')",
+            "INSERT INTO contact VALUES ('"+username+"','我的昵称','my-alias')"])
+        account=MacSource(self.keys).account_info()
+        self.assertEqual(account['nickname'],'我的昵称');self.assertEqual(account['wechat_alias'],'my-alias')
+        self.assertNotIn(str(self.root),str(account))
+
     def test_multiple_accounts_are_rejected(self):
         save_private(self.keys, {'databases': [{'root': str(self.root)}, {'root': str(self.root / 'other')}]})
         with self.assertRaisesRegex(RuntimeError, 'expected_one_verified_account'):

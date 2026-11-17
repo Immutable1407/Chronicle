@@ -147,6 +147,12 @@ class BrowserHandler(DesktopHandler):
                         shutil.rmtree(temporary.parent,ignore_errors=True)
                 if self.path=='/api/setup/connect':
                     return self.json(self.app.begin_connection(value['account'],value.get('label') or '微信账号',quit_running=value.get('quit_running') is True))
+                if self.path=='/api/setup/confirm-account':
+                    return self.json(self.app.confirm_account(value.get('label')))
+                if self.path=='/api/setup/discard-account':
+                    return self.json(self.app.discard_pending_account())
+                if self.path=='/api/setup/profile-label':
+                    return self.json(self.app.rename_profile(value['profile'],value.get('label')))
                 if self.path=='/api/setup/cancel':
                     process=self.app.connection_process
                     if process and process.poll() is None:
@@ -161,7 +167,7 @@ class BrowserHandler(DesktopHandler):
                     return self.json({'saved':True})
             return self.json({'error':'not_found'},404)
         except Exception as error:
-            known={'developer_tools_required','source_dependencies_required','quit_wechat_first','select_account_first','connection_already_running','connection_candidate_expired','demo_read_only_setup'}
+            known={'developer_tools_required','source_dependencies_required','quit_wechat_first','select_account_first','connection_already_running','connection_candidate_expired','account_confirmation_required','invalid_profile_label','profile_not_found','demo_read_only_setup'}
             code=str(error) if str(error) in known else 'keychain_permission_required' if str(error).startswith('keychain_') else 'setup_operation_failed'
             return self.json({'error':code},400)
 

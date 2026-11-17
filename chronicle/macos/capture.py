@@ -105,7 +105,7 @@ def capture(executable, roots, output, timeout):
                 # One confirmed account passphrase may also unlock its other shards.
                 # Never apply it to another account just because that account is on disk.
                 if rounds == 256000 and updated:
-                    confirmed_roots = {entry['root'] for entry in found.values()}
+                    confirmed_roots = {entry['root'] for entry in found.values() if entry['salt'] == salt.hex()}
                     for confirmed_root in confirmed_roots:
                         account_material[confirmed_root] = secret.hex()
                     for other_root, name, page in pages:

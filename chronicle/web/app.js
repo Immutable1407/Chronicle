@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const state = { projects: [], project: null, data: null, mode: 'timeline', date: '', month: '', sources: new Map(),
   conversations: [], conversation: null, sourceMessages: [], before: null, selected: new Map(),
-  importProject: null, transcriptMessage: null, request: 0, sourceRequest: 0, loadingSource: false, desktop: false, runMode: "legacy", sourceAvailable: false, demo: false, preflight: null, savedProject: null };
+  importProject: null, transcriptMessage: null, request: 0, sourceRequest: 0, loadingSource: false, desktop: false, runMode: "legacy", sourceAvailable: false, demo: false, preflight: null, savedProject: null, connectionPhase: "idle", loginDeadline: null };
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -19,7 +19,7 @@ async function api(path, data) {
 }
 let toastTimer;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
-function errorText(error) { return ({ selection_expired: '选择已过期，请重新打开会话。', select_messages_first: '请先勾选相关消息。', wechat_not_connected: '暂时无法读取本机微信。', developer_tools_required: '首次连接需要 Apple 命令行工具。', connection_candidate_expired: '连接列表已更新，请重新打开设置。', keychain_permission_required: '请在系统提示中允许访问钥匙串，然后重试保存连接。' })[error.message] || '暂时无法完成操作，请重试。'; }
+function errorText(error) { return ({ selection_expired: '选择已过期，请重新打开会话。', select_messages_first: '请先勾选相关消息。', wechat_not_connected: '暂时无法读取本机微信。', developer_tools_required: '首次连接需要 Apple 命令行工具。', connection_candidate_expired: '连接列表已更新，请重新打开设置。', account_confirmation_required:'请先确认识别到的账号，或选择换个账号重试。', invalid_profile_label:'请填写不超过 100 字的账号备注。', keychain_permission_required: '请在系统提示中允许访问钥匙串，然后重试保存连接。' })[error.message] || '暂时无法完成操作，请重试。'; }
 function empty(title, description, action, label) {
   const node = el('div', 'empty-state'); node.append(el('div', 'empty-symbol', '↳'), el('h3', '', title), el('p', '', description));
   if (action) node.append(button(label, 'button secondary', action));
@@ -308,6 +308,7 @@ function savePreferences() {
 async function openSettings() {
   if (state.demo) return toast('这是独立示例，不会连接本机微信。');
   $('newConnectionPanel').hidden=true; $('settingsDialog').showModal(); await desktopState();
+  if (connectionBusy(state.connectionPhase) || ['credentials_pending','confirm_account'].includes(state.connectionPhase)) return;
   if (state.runMode === 'source') await loadKnownConnections();
   const hasKnown=!!document.querySelector('.known-connection-card');
   $('newConnectionPanel').hidden=state.sourceAvailable || hasKnown;
@@ -337,7 +338,65 @@ function nativeAction(action) {
   if (action==='installDeveloperTools') return api('/api/setup/tools',{}).then(()=>toast('请按 Apple 安装窗口的提示完成，随后重新检测。'));
   toast('源码运行时可用启动参数打开已有档案，详情见 README。');
 }
-let connectionTimer;
+let connectionTimer, countdownTimer;
+function connectionBusy(phase) { return ['preparing','closing_wechat','waiting_for_login','verifying','restored','canceling'].includes(phase); }
+function renderConnectionPhase(value) {
+  const phase=value.connection.state, active=connectionBusy(phase), pending=['credentials_pending','confirm_account'].includes(phase);
+  state.connectionPhase=phase;state.loginDeadline=value.connection.login_deadline;
+  const stages={
+    preparing:{step:1,title:'正在打开微信登录窗口',copy:'请稍候。准备好后，这里会提示你完成登录。',foot:'这一步由 Chronicle 自动完成。'},
+    closing_wechat:{step:1,title:'请确认退出当前微信',copy:'如果微信弹出退出确认，请选择退出。随后会自动打开本次连接的登录窗口。',foot:'不会强制关闭微信；你可以在微信里取消退出。'},
+    awaiting_quit:{step:1,title:'微信还没有退出',copy:'请先正常退出微信，再点击下方按钮继续。',foot:'准备好的档案不受影响。'},
+    waiting_for_login:{step:2,title:'现在切到微信，确认登录',copy:'微信登录窗口已经打开。接下来需要你在微信和手机上完成登录。',instructions:['切到微信窗口，选择这次要连接的大号或小号。','点击登录；如果显示二维码或手机确认，请按微信提示完成。','登录成功后回到这里，确认识别出的昵称，并为账号加上备注。'],foot:'不需要再次点击“开始连接”。识别成功后，这里会显示账号昵称。'},
+    verifying:{step:3,title:'登录已识别，正在验证连接',copy:'正在核对账号数据。完成后会自动恢复原版微信。',foot:'现在不需要操作，请保持页面打开。'},
+    restored:{step:3,title:'正在识别账号身份',copy:'原版微信已恢复。识别出昵称后，请在这里确认账号并添加备注。',foot:'稍后会提示你确认实际登录的账号。'},
+    canceling:{step:2,title:'正在取消并恢复微信',copy:'请稍候，结束本次连接后会恢复原版微信。',foot:'无需重复点击取消。'},
+    cancelled:{step:1,title:'本次连接已取消',copy:'你可以重新检测条件，再次开始连接。',foot:'已有档案仍可正常查看。',tone:'warning'},
+    confirm_account:{step:3,title:'已识别到微信账号，请确认',copy:'确认这是你准备归档的账号，再加上便于辨认的备注。以后会显示备注和昵称。',foot:'确认后才会保存连接；不会自动归档聊天内容。'},
+    credentials_pending:{step:3,title:'登录已验证，还需允许保存连接',copy:'点击“允许保存连接”，并在系统钥匙串提示中允许访问。不需要重新登录微信。',foot:'凭据保存成功后，下一步是选择聊天和消息。',tone:'warning'},
+    recovery_required:{step:1,title:'需要先恢复原版微信',copy:'请退出临时微信窗口，再从“应用程序”打开原版微信。恢复后再重新检测。',foot:'请先完成恢复，再开始新的连接。',tone:'warning'},
+    failed:{step:1,title:'连接尚未完成',copy:value.connection.error==='login_not_verified'?'这次没有收到有效的登录结果。原版微信已恢复；准备好后可以重新连接。':'未能验证这次连接。请确认微信和手机上的登录步骤已完成，再重新连接。',foot:'当前没有保存成功的连接；已归档内容不受影响。',tone:'warning'}
+  };
+  const stage=stages[phase];
+  $('settingsDialog').classList.toggle('is-connecting',active||pending||phase==='awaiting_quit');
+  $('connectionJourney').hidden=!stage;
+  $('connectionDialogTitle').textContent=active||pending?'完成微信连接':state.sourceAvailable?'微信连接已就绪':'连接微信';
+  $('connectionDialogCopy').textContent=active||pending?'跟随下方当前步骤操作，页面会自动更新。':'首次连接完成后，就能在项目中选择聊天和消息。';
+  if(stage) {
+    $('connectionJourney').classList.toggle('warning',stage.tone==='warning');
+    $('connectionStageIcon').textContent=stage.tone==='warning'?'!':stage.step;
+    $('connectionStageLabel').textContent=phase==='waiting_for_login'||pending||phase==='awaiting_quit'?'现在需要你操作':active?'正在自动处理':'下一步';
+    $('connectionStageTitle').textContent=stage.title;$('connectionStageCopy').textContent=stage.copy;
+    $('connectionInstructions').replaceChildren(...(stage.instructions||[]).map(text=>el('li','',text)));
+    $('connectionInstructions').hidden=!stage.instructions;
+    $('connectionStageFootnote').textContent=stage.foot;
+    document.querySelectorAll('[data-connection-step]').forEach(node=>{const step=Number(node.dataset.connectionStep);node.classList.toggle('current',step===stage.step);node.classList.toggle('complete',step<stage.step);node.setAttribute('aria-current',step===stage.step?'step':'false');});
+  }
+  $('confirmAccountPanel').hidden=phase!=='confirm_account';
+  if(phase==='confirm_account') {
+    const account=value.connection.account||{};
+    $('confirmedAccountName').textContent=account.nickname||'已验证的微信账号（未读取到昵称）';
+    $('confirmedAccountAvatar').textContent=account.nickname?.slice(0,1)||'微';
+    $('confirmedAccountAlias').textContent=account.wechat_alias?'微信号：'+account.wechat_alias:'请结合刚才的微信登录窗口确认账号。';
+    if(!$('confirmedAccountLabel').value)$('confirmedAccountLabel').value=value.connection.label||$('accountLabel').value||'';
+  }
+  $('connectionWindowHelp').hidden=phase!=='waiting_for_login';
+  $('refreshConnection').hidden=phase!=='waiting_for_login';
+  $('continueConnection').hidden=phase!=='awaiting_quit';
+  $('cancelConnection').hidden=!active || ['closing_wechat','canceling'].includes(phase);
+  $('retryCredentials').hidden=phase!=='credentials_pending';
+  $('checkConnection').disabled=active||pending;
+  $('detectedAccounts').disabled=active||pending||state.preflight?.developer_tools_ready===false;
+  $('accountLabel').disabled=active||pending;
+  const ready=state.preflight?.developer_tools_ready && state.preflight?.dependencies_ready!==false && state.preflight?.accounts.length && $('detectedAccounts').value;
+  $('connectDesktop').disabled=active||pending||!ready;
+  if(!active) $('connectDesktop').textContent=['failed','cancelled'].includes(phase)?'重新连接':state.preflight?.wechat_running?'退出微信并连接':'开始连接';
+  if(phase==='connected') $('newConnectionPanel').hidden=true;
+  clearInterval(countdownTimer);
+  function countdown(){const remaining=Math.max(0,Math.ceil(state.loginDeadline-Date.now()/1000));$('connectionCountdown').hidden=phase!=='waiting_for_login'||!state.loginDeadline;$('connectionCountdown').textContent=remaining?`请在 ${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')} 内完成登录。超时后会结束本次连接，可重新尝试。`:'正在结束等待并检查连接结果，请稍候。';}
+  countdown();if(phase==='waiting_for_login'&&state.loginDeadline)countdownTimer=setInterval(countdown,1000);
+}
+
 async function desktopState() {
   const value=await api('/api/desktop/state');
   const status=await api('/api/status');
@@ -348,29 +407,24 @@ async function desktopState() {
   $('tryDemo').hidden=state.demo || state.runMode!=='source';
   $('importArchive').hidden=value.native_file_picker!==undefined?!value.native_file_picker:state.runMode==='source';
   const placeholder=new Option('尚未连接','');placeholder.disabled=value.profiles.length>0 || !!value.legacy_available;
-  const options=value.profiles.map(p=>new Option(p.label,p.id));
+  const options=value.profiles.map(p=>new Option(p.label+(p.nickname&&p.nickname!==p.label?' · '+p.nickname:''),p.id));
   if(value.legacy_available)options.push(new Option('当前工作区的已验证连接','legacy'));
   $('desktopProfiles').replaceChildren(placeholder,...options);
   $('desktopProfiles').value=value.selected_profile || (value.legacy_available?'legacy':'');
   const selected=value.profiles.find(p=>p.id===value.selected_profile);
+  $('profileRemarkEditor').hidden=!selected || state.runMode!=='source';
+  if(selected && document.activeElement!==$('profileRemark'))$('profileRemark').value=selected.label;
   $('connection').textContent=state.demo?'示例工作区 · 不读取微信':state.sourceAvailable?'已连接 · '+(selected?.label||'现有工作区'):'微信尚未连接';
   document.querySelector('.connection-dot').classList.toggle('connected',state.sourceAvailable);
-  $('connectionReady').hidden=!state.sourceAvailable || state.demo;
-  $('connectionReadyCopy').textContent=value.legacy_available && !selected?'已验证连接可以直接读取，无需再次退出或登录微信。':'可以直接回到项目选择消息。';
-  $('backToProject').textContent=state.project?'去选择消息 →':'创建项目 →';
+  $('connectionReady').hidden=!state.sourceAvailable || state.demo || connectionBusy(value.connection.state) || ['confirm_account','credentials_pending','awaiting_quit'].includes(value.connection.state);
+  $('connectionReadyCopy').textContent=`${status.conversation_count ? '已找到 '+status.conversation_count+' 个会话。' : ''}下一步：选择聊天，勾选与项目有关的消息。`;
+  $('backToProject').textContent=state.project?'选择聊天和消息 →':'创建项目 →';
   if(!value.welcome_complete && !$('welcomeDialog').open && !state.demo)$('welcomeDialog').showModal();
   if(value.welcome_complete && $('welcomeDialog').open)$('welcomeDialog').close();
+  renderConnectionPhase(value);
   const phase=value.connection.state;
-  const messages={idle:'',preparing:'正在准备临时连接窗口…',closing_wechat:'正在请求正常退出微信，请留意微信的确认窗口。',awaiting_quit:'微信尚未退出。你可以手动退出后点击“继续连接”。',waiting_for_login:'请在临时微信窗口中确认登录，完成后会自动恢复原版。',verifying:'正在验证账号数据…',restored:'已恢复原版微信，正在保存连接。',connected:'连接完成。以后会复用本次连接，无需重复初始化。',canceling:'正在结束临时连接并恢复原版微信…',cancelled:'已取消连接。你可以重新开始。',credentials_pending:'账号已验证，凭据尚未存入钥匙串。重试保存即可，无需重新登录。',recovery_required:'临时连接未正常结束。请先退出临时微信并打开原版，再检查连接。',failed:'连接未完成，请检查登录与系统授权。已归档内容仍可阅读。'};
-  $('connectionProgress').textContent=messages[phase]??'正在连接…';
-  const running=['preparing','closing_wechat','waiting_for_login','verifying','restored','canceling'].includes(phase);
-  $('cancelConnection').hidden=!running || phase==='closing_wechat';
-  $('retryCredentials').hidden=phase!=='credentials_pending';
-  $('checkConnection').disabled=running;
-  if(phase==='awaiting_quit'){$('connectDesktop').disabled=false;$('connectDesktop').textContent='继续连接';}
-  if(running)$('connectDesktop').disabled=true;
   clearTimeout(connectionTimer);
-  if(running)connectionTimer=setTimeout(()=>desktopState().catch(()=>{}),1500);
+  if(connectionBusy(phase))connectionTimer=setTimeout(()=>desktopState().catch(()=>{}),1500);
   updateGuidance();
   return value;
 }
@@ -379,14 +433,14 @@ async function checkConditions() {
   try {
     const info=await api('/api/desktop/preflight');state.preflight=info;
     const previous=$('detectedAccounts').value;
-    $('detectedAccounts').replaceChildren(new Option('请选择要连接的账号',''),...info.accounts.map(a=>new Option(a.label,a.id)));
-    if(info.accounts.some(a=>a.id===previous))$('detectedAccounts').value=previous;
-    else if(info.accounts.length===1)$('detectedAccounts').value=info.accounts[0].id;
+    const labels=info.accounts.map((a,index)=>new Option((a.label.startsWith('wxid_')?'尚未识别的本机账号 '+(index+1):a.label)+(a.nickname?' · '+a.nickname:'')+(a.directory_hint?'（目录尾号 '+a.directory_hint+'）':''),a.id));
+    $('detectedAccounts').replaceChildren(new Option('登录微信后自动识别（推荐）','auto'),...labels);
+    $('detectedAccounts').value=info.accounts.some(a=>a.id===previous)?previous:'auto';
     $('installDeveloperTools').hidden=info.developer_tools_ready;
-    $('developerToolsStatus').textContent=!info.developer_tools_ready?'首次连接需要 Apple 命令行工具。准备好后重新检测即可。':info.dependencies_ready===false?'需要先在终端安装读取依赖：brew install sqlcipher zstd。完成后重新检测。':!info.accounts.length?'未找到本机账号，请确认已在这台 Mac 登录过微信并允许读取本地数据。':info.wechat_running?'条件已就绪。开始时会请求正常退出微信，并在完成后自动恢复。':'条件已就绪，请选择要连接的账号。';
+    $('developerToolsStatus').textContent=!info.developer_tools_ready?'首次连接需要 Apple 命令行工具。准备好后重新检测即可。':info.dependencies_ready===false?'需要先在终端安装读取依赖：brew install sqlcipher zstd。完成后重新检测。':!info.accounts.length?'未找到本机账号，请确认已在这台 Mac 登录过微信并允许读取本地数据。':info.wechat_running?'条件已就绪。开始时会请求正常退出微信，并在完成后自动恢复。':'条件已就绪。下一步去微信登录你要连接的账号，不需要先辨认编号。';
     $('detectedAccounts').disabled=!info.developer_tools_ready;
     $('connectDesktop').textContent=info.wechat_running?'退出微信并连接':'开始连接';
-    $('connectDesktop').disabled=!info.developer_tools_ready || info.dependencies_ready===false || !$('detectedAccounts').value;
+    $('connectDesktop').disabled=!info.developer_tools_ready || info.dependencies_ready===false || !info.accounts.length || !$('detectedAccounts').value;
   } catch {$('developerToolsStatus').textContent='暂时无法读取本机条件，请检查微信数据访问权限。';}
 }
 $('welcomeDialog').addEventListener('close',()=>{if(state.desktop && !state.demo)api('/api/desktop/welcome',{}).catch(()=>{});});
@@ -413,12 +467,18 @@ $('connectionFile').addEventListener('change',async event=>{
   try {await api('/api/setup/import-connection',{manifest:JSON.parse(await file.text()),label:$('accountLabel').value.trim()||'本机微信'});await desktopState();toast('连接已保存到钥匙串');}
   catch(error){toast(errorText(error));}finally{event.target.value='';}
 });
-$('detectedAccounts').addEventListener('change',event=>{$('connectDesktop').disabled=!event.target.value||!state.preflight?.developer_tools_ready||state.preflight?.dependencies_ready===false;});
+$('detectedAccounts').addEventListener('change',event=>{$('connectDesktop').disabled=!event.target.value||!state.preflight?.developer_tools_ready||state.preflight?.dependencies_ready===false||!state.preflight?.accounts.length;});
 $('connectDesktop').addEventListener('click',async()=>{
-  $('connectDesktop').disabled=true;
+  $('connectDesktop').disabled=true;$('confirmedAccountLabel').value='';
   try {const route=state.runMode==='source'?'/api/setup/connect':'/api/desktop/connect';await api(route,{account:$('detectedAccounts').value,label:$('accountLabel').value.trim()||'微信账号',quit_running:!!state.preflight?.wechat_running});await desktopState();}
   catch(error){$('connectionProgress').textContent=errorText(error);$('connectDesktop').disabled=false;}
 });
+$('confirmAccount').addEventListener('click',async()=>{const node=$('confirmAccount');node.disabled=true;try{await api('/api/setup/confirm-account',{label:$('confirmedAccountLabel').value});await desktopState();toast('账号已保存，接下来选择聊天和消息。');}catch(error){await desktopState();toast(errorText(error));}finally{node.disabled=false;}});
+$('discardAccount').addEventListener('click',async()=>{try{await api('/api/setup/discard-account',{});await desktopState();$('newConnectionPanel').hidden=false;await checkConditions();toast('未保存这个账号。现在可重新连接你要使用的微信。');}catch(error){toast(errorText(error));}});
+$('saveProfileRemark').addEventListener('click',async()=>{try{await api('/api/setup/profile-label',{profile:$('desktopProfiles').value,label:$('profileRemark').value});await desktopState();toast('账号备注已保存');}catch(error){toast(errorText(error));}});
+$('refreshConnection').addEventListener('click',async()=>{const value=await desktopState();if(value.connection.state==='waiting_for_login')toast('尚未收到登录完成结果。请确认微信和手机上的登录步骤已完成，页面会自动更新。');});
+$('continueConnection').addEventListener('click',async()=>{await checkConditions();if(!$('connectDesktop').disabled)$('connectDesktop').click();});
+window.addEventListener('focus',()=>{if(connectionBusy(state.connectionPhase))desktopState().catch(()=>{});});
 $('cancelConnection').addEventListener('click',async()=>{await api('/api/setup/cancel',{});await desktopState();});
 $('retryCredentials').addEventListener('click',async()=>{try{await api('/api/desktop/retry-credentials',{});await desktopState();}catch(error){toast(errorText(error));}});
 window.addEventListener('chronicle-native-updated',async()=>{await desktopState();await loadProjects();toast('导入完成');});

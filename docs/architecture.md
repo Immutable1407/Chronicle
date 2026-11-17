@@ -41,7 +41,7 @@ Default home: `~/Library/Application Support/Chronicle/`.
 ## Deliberate limits
 
 - Mac connection was validated on Apple Silicon and WeChat 4.1.15; it is not a supported WeChat API.
-- The first connection still needs an explicit login confirmation. Normal quit can be canceled; Chronicle does not force-kill the user's installed WeChat.
+- First connection defaults to detecting the account that actually logs in. After validation, the user confirms its own-contact nickname and an editable local label before credentials are saved. Normal quit can be canceled; Chronicle does not force-kill the user's installed WeChat.
 - No automatic history sync, cloud sync, AI summaries or full-text reconstruction from screenshots.
 - Automatic cloud transcription is not configured out of the box. The workbench currently offers playback and manual text, with jobs exposed through the CLI.
 - Windows adapter, Intel Mac compatibility, installable releases and automatic updates are not completed.

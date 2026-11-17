@@ -60,13 +60,23 @@ class DesktopWorkbench(Workbench):
         self.connection = {'state': 'idle'}
         self.connection_process = None
         self.connection_thread = None
+        self.connection_context = {}
         self.pending_credentials = None
         super().__init__(store.home / 'archive', store.home / 'cache')
         for key_file in sorted((store.home / 'connection-attempts').glob('*/verified-keys.json')):
             state_file = key_file.parent / 'state.json'
             if state_file.is_file() and json.loads(state_file.read_text()).get('phase') == 'verified':
-                self.pending_credentials = (key_file, '微信账号')
+                record=json.loads(state_file.read_text())
+                self.pending_credentials = (key_file, record.get('connection_label') or '我的微信')
                 self.connection = {'state': 'credentials_pending'}
+                if record.get('confirmation_required'):
+                    try:
+                        account=self.describe_connection(key_file)
+                        self.connection={'state':'confirm_account','account':account}
+                        self.connection_context={'label':record.get('connection_label') or ''}
+                    except Exception:
+                        self.pending_credentials=None
+                        self.connection={'state':'failed','error':'account_identity_uncertain'}
 
     def source(self):
         selected = self.store.config.get('selected_profile')
@@ -88,14 +98,18 @@ class DesktopWorkbench(Workbench):
     def desktop_state(self):
         return {'welcome_complete': self.store.config['welcome_complete'],
                 'profiles': self.store.config['profiles'], 'selected_profile': self.store.config.get('selected_profile'),
-                'connection': self.connection}
+                'connection': {**self.connection, **self.connection_context}}
 
     def preflight(self):
         mac_modules()
         from .macos.bootstrap import wechat_process_paths
         base = Path.home() / 'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
-        accounts = [{'id': identity(str(path.resolve())), 'label': path.parent.name}
-                    for path in sorted(base.glob('*/db_storage'))]
+        saved={profile['id']:profile for profile in self.store.config['profiles']}
+        accounts=[]
+        for index,path in enumerate(sorted(base.glob('*/db_storage')),1):
+            key=identity(str(path.resolve()));profile=saved.get(key,{})
+            accounts.append({'id':key,'label':profile.get('label') or '尚未识别的本机账号 '+str(index),
+                             'nickname':profile.get('nickname') or '', 'directory_hint':path.parent.name[-4:]})
         ready = False
         selected = subprocess.run(['/usr/bin/xcode-select', '-p'], capture_output=True, timeout=10)
         if selected.returncode == 0:
@@ -121,15 +135,67 @@ class DesktopWorkbench(Workbench):
             raise ValueError('unexpected_account_directory')
         source.conversations()  # Validate both contact and session schemas before reporting connected.
         profile = identity(str(source.root))
+        account=source.account_info()
         self.vault.put(profile, manifest)
         self.store.config['profiles'] = [p for p in self.store.config['profiles'] if p['id'] != profile] + [
-            {'id': profile, 'label': (label or source.root.parent.name)[:100]}]
+            {'id': profile, 'label': (label or account['nickname'] or '我的微信')[:100], 'nickname':account['nickname'], 'wechat_alias':account['wechat_alias']}]
         self.store.config['selected_profile'] = profile
         self.store.save()
         self.manifest = manifest
         return {'connected': True}
 
+    def describe_connection(self, path):
+        MacSource, _, _ = mac_modules()
+        source=MacSource(key_data=json.loads(Path(path).read_text()))
+        source.conversations()
+        return source.account_info()
+
+    def queue_account_confirmation(self, path, label):
+        account=self.describe_connection(path)
+        journal=Path(path).parent/'state.json'
+        record=json.loads(journal.read_text())
+        record.update(confirmation_required=True,connection_label=label)
+        write_json(journal,record)
+        self.pending_credentials=(Path(path),label)
+        self.connection={'state':'confirm_account','account':account}
+
+    def confirm_account(self, label):
+        if self.connection['state']!='confirm_account' or not self.pending_credentials:
+            raise ValueError('account_confirmation_required')
+        path,previous=self.pending_credentials
+        label=label.strip() if isinstance(label,str) else ''
+        self.pending_credentials=(path,(label or previous)[:100])
+        journal=path.parent/'state.json';record=json.loads(journal.read_text())
+        record.update(confirmation_required=False,connection_label=self.pending_credentials[1])
+        write_json(journal,record)
+        self.connection={'state':'credentials_pending'}
+        return self.save_pending_credentials()
+
+    def discard_pending_account(self):
+        if self.connection['state']!='confirm_account' or not self.pending_credentials:
+            raise ValueError('account_confirmation_required')
+        path,_=self.pending_credentials
+        path.unlink(missing_ok=True)
+        import shutil
+        for name in ('Chronicle-WeChat.disabled','Chronicle-WeChat.app'):
+            owned=path.parent/name
+            if owned.exists():shutil.rmtree(owned)
+        journal=path.parent/'state.json';record=json.loads(journal.read_text())
+        record.update(phase='account_declined',confirmation_required=False);write_json(journal,record)
+        self.pending_credentials=None;self.connection_context={};self.connection={'state':'cancelled'}
+        return {'cancelled':True}
+
+    def rename_profile(self, profile, label):
+        if not isinstance(label,str) or not label.strip() or len(label)>100:
+            raise ValueError('invalid_profile_label')
+        selected=next((p for p in self.store.config['profiles'] if p['id']==profile),None)
+        if selected is None:raise ValueError('profile_not_found')
+        selected['label']=label.strip();self.store.save()
+        return {'saved':True}
+
     def save_pending_credentials(self):
+        if self.connection['state']=='confirm_account':
+            raise ValueError('account_confirmation_required')
         if not self.pending_credentials:
             raise ValueError('no_pending_credentials')
         path, label = self.pending_credentials
@@ -147,6 +213,8 @@ class DesktopWorkbench(Workbench):
     def begin_connection(self, account_id, label, quit_running=False):
         if self.connection_thread and self.connection_thread.is_alive():
             raise ValueError('connection_already_running')
+        if self.pending_credentials:
+            raise ValueError('account_confirmation_required')
         preflight = self.preflight()
         if not preflight['developer_tools_ready']:
             raise ValueError('developer_tools_required')
@@ -155,10 +223,12 @@ class DesktopWorkbench(Workbench):
         if preflight['wechat_running'] and not quit_running:
             raise ValueError('quit_wechat_first')
         base = Path.home() / 'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
-        roots = [p for p in base.glob('*/db_storage') if identity(str(p.resolve())) == account_id]
-        if len(roots) != 1:
+        roots = [p for p in base.glob('*/db_storage') if account_id=='auto' or identity(str(p.resolve())) == account_id]
+        if not roots or account_id!='auto' and len(roots) != 1:
             raise ValueError('select_account_first')
         attempt = self.store.home / 'connection-attempts' / secrets.token_hex(12)
+        import time
+        self.connection_context = {'started_at':int(time.time()),'label':label[:100]}
         self.connection = {'state': 'preparing'}
         def worker():
             recovery_required = False
@@ -175,14 +245,17 @@ class DesktopWorkbench(Workbench):
                     command = [sys.executable, '--bootstrap']
                 else:
                     command = [sys.executable, '-m', 'chronicle.macos.bootstrap']
-                self.connection_process = subprocess.Popen(command + ['--state', str(attempt),
-                    '--database-root', str(roots[0]), '--timeout', '300'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                arguments=command + ['--state', str(attempt), '--timeout', '300']
+                for root in roots:arguments.extend(['--database-root',str(root)])
+                self.connection_process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
                 for line in self.connection_process.stdout:
                     try:
                         value = json.loads(line)
                     except ValueError:
                         continue
                     event = value.get('event')
+                    if event == 'login_required':
+                        self.connection_context['login_deadline'] = int(time.time()) + 300
                     if event == 'manual_restore_required':
                         recovery_required = True
                     self.connection = {'state': {'login_required': 'waiting_for_login', 'child_started': 'waiting_for_login',
@@ -191,11 +264,12 @@ class DesktopWorkbench(Workbench):
                 if rc == 130:
                     self.connection = {'state': 'cancelled'}
                     return
+                if rc == 3 and not recovery_required:
+                    self.connection = {'state':'failed','error':'login_not_verified'}
+                    return
                 if rc:
                     raise RuntimeError('initialization_failed')
-                self.pending_credentials = (attempt / 'verified-keys.json', label)
-                result = self.save_pending_credentials()
-                self.connection = {'state': 'connected', **result}
+                self.queue_account_confirmation(attempt / 'verified-keys.json',label)
             except Exception:
                 self.connection = {'state': 'recovery_required' if recovery_required else
                                    'credentials_pending' if self.pending_credentials else 'failed', 'error': 'connection_failed'}

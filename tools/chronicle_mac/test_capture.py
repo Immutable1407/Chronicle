@@ -54,17 +54,17 @@ class CaptureIntegration(unittest.TestCase):
     def tearDownClass(cls):
         cls.workspace.cleanup()
 
-    def run_capture(self, name, idle=False, timeout=10):
+    def run_capture(self, name, idle=False, timeout=10, roots=None):
         output = self.root / name / 'keys.json'
         pidfile = self.root / (name + '.pid')
         env = dict(os.environ, PYTHONPATH=self.lldb_path,
                    CHRONICLE_FIXTURE_PID_FILE=str(pidfile))
         if idle:
             env['CHRONICLE_FIXTURE_IDLE'] = '1'
-        result = subprocess.run([
-            '/usr/bin/python3', str(Path(__file__).with_name('capture.py')),
-            '--executable', str(self.executable), '--database-root', str(self.root),
-            '--output', str(output), '--timeout', str(timeout)], env=env,
+        command=['/usr/bin/python3',str(Path(__file__).with_name('capture.py')),
+                 '--executable',str(self.executable),'--output',str(output),'--timeout',str(timeout)]
+        for root in roots or [self.root]:command.extend(['--database-root',str(root)])
+        result = subprocess.run(command, env=env,
             capture_output=True, text=True, timeout=40)
         return result, output, pidfile
 
@@ -110,6 +110,19 @@ class CaptureIntegration(unittest.TestCase):
             capture_output=True, text=True, timeout=15)
         self.assertEqual(repeated.returncode, 2)
         self.assertNotIn('child_started', repeated.stdout)
+
+    def test_auto_candidates_do_not_bind_another_accounts_material(self):
+        with tempfile.TemporaryDirectory(prefix='chronicle-other-account-') as directory:
+            other=Path(directory)
+            with CipherDatabase(other/'other.db','99'*32,fixture_write=True) as db:db.query('CREATE TABLE other (n INTEGER)')
+            before=hashlib.sha256((other/'other.db').read_bytes()).hexdigest()
+            result,output,pidfile=self.run_capture('multiple-candidates',roots=[self.root,other])
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            manifest=json.loads(output.read_text())
+            self.assertEqual({row['root'] for row in manifest['databases']},{str(self.root.resolve())})
+            self.assertEqual(set(manifest['account_material']),{str(self.root.resolve())})
+            self.assertEqual(hashlib.sha256((other/'other.db').read_bytes()).hexdigest(),before)
+            self.assert_child_closed(pidfile)
 
     def test_timeout_closes_only_owned_child(self):
         result, output, pidfile = self.run_capture('timeout', idle=True, timeout=2)

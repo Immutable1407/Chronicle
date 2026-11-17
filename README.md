@@ -48,7 +48,7 @@ brew install sqlcipher zstd ffmpeg
 In the workbench:
 
 1. **Create a project.** Use a name for the work you are advancing, rather than a contact.
-2. **Connect your source.** Reuse an existing verified connection when available. Otherwise choose the local account, start connection, and confirm login in the temporary WeChat window. Chronicle restores the original application and saves a validated connection in macOS Keychain. This first connection briefly interrupts WeChat; later launches reuse it.
+2. **Connect your source.** Reuse an existing verified connection when available. Otherwise keep automatic account detection, start connection, and log into the intended account in the temporary WeChat window. Chronicle restores the original application, shows the verified account nickname, and lets you confirm a label such as “Main account” before saving the connection in macOS Keychain. Labels can be edited later; you do not need to identify technical account codes. This first connection briefly interrupts WeChat; later launches reuse it.
 3. **Add conversations.** Choose a private chat or group, select messages, switch conversations as needed, then archive the selection. Repeated selection does not add the same source message twice to the project.
 
 The initial connection uses a Chronicle-owned temporary application copy and a debugger. It does not modify the installed WeChat binary, disable SIP or require `sudo`. It is **not an official WeChat integration**, and cannot guarantee freedom from client detection or account restrictions. Use only data you are authorized to process. See [connection details](docs/connection.md).

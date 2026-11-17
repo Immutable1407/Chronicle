@@ -12,7 +12,8 @@ FILES=['.gitignore','AGENTS.md','LICENSE','README.md','README.zh-CN.md','CONTRIB
        'config/asr-profile.example.json','tools/mac_wechat_preflight.py','tools/chronicle_mac/README.md',
        'tools/chronicle_mac/requirements-codec.txt',
        'docs/architecture.md','docs/connection.md','docs/agent-setup.md','docs/windows-handoff.md','docs/transcription.md',
-       'docs/screenshots/workbench.png','docs/screenshots/first-use.png']
+       'docs/screenshots/workbench.png','docs/screenshots/first-use.png',
+       'docs/screenshots/connection-login.png','docs/screenshots/account-confirm.png']
 
 
 def inputs():
@@ -33,7 +34,7 @@ def audit(paths):
     for path in paths:
         if path.is_symlink() or not path.is_file():failures.append(str(path.relative_to(ROOT))+': missing or symlink');continue
         if path.stat().st_size>2*1024*1024:failures.append(str(path.relative_to(ROOT))+': oversized');continue
-        if path.suffix=='.png':continue  # Only the two explicitly reviewed synthetic screenshots are allowlisted.
+        if path.suffix=='.png':continue  # Only explicitly reviewed synthetic screenshots are allowlisted.
         text=path.read_text()
         for pattern in patterns:
             if re.search(pattern,text):failures.append(str(path.relative_to(ROOT))+': privacy scan match');break

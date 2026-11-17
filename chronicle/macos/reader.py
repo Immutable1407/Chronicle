@@ -55,6 +55,15 @@ class MacSource:
         self.entries = {entry['database']: entry for entry in entries}
         self.account = hashlib.sha256(str(self.root).encode()).hexdigest()
 
+    def account_info(self):
+        """Read the verified account's own contact; never guess from other contacts."""
+        folder=self.root.parent.name
+        username=re.match(r'wxid_[^_]+',folder).group() if folder.startswith('wxid_') else re.sub(r'_[A-Za-z0-9]{4}$','',folder)
+        with self.open('contact/contact.db') as database:
+            rows=database.query('SELECT nick_name,alias FROM contact WHERE username='+text_literal(username)+' LIMIT 1')
+        own=rows[0] if rows else {}
+        return {'id':self.account,'nickname':own.get('nick_name') or '', 'wechat_alias':own.get('alias') or ''}
+
     def open(self, name):
         entry = self.entries.get(name)
         if entry is None:
