@@ -160,6 +160,21 @@ class SourceSession(unittest.TestCase):
         self.assertFalse(path.exists());self.assertIsNone(self.app.pending_credentials)
         self.assertEqual(self.app.connection['state'],'cancelled')
 
+    def test_shutdown_during_quit_cannot_start_a_late_debugger(self):
+        root=self.root/'artificial/db_storage';root.mkdir(parents=True)
+        entered=threading.Event();calls=[]
+        def run(arguments,**_):
+            calls.append(arguments)
+            if arguments[0]=='/usr/bin/osascript':
+                entered.set();self.app.connection_stop.wait(3)
+            return SimpleNamespace(returncode=0)
+        with patch.object(self.app,'preflight',return_value={'developer_tools_ready':True,'wechat_running':True}),patch('pathlib.Path.glob',return_value=[root]),patch('subprocess.run',side_effect=run),patch('chronicle.macos.bootstrap.wechat_process_paths',return_value=[]),patch('subprocess.Popen') as launch:
+            self.app.begin_connection(identity(str(root.resolve())),'fixture',True)
+            self.assertTrue(entered.wait(2));self.app.close()
+            self.assertFalse(self.app.connection_thread.is_alive());launch.assert_not_called()
+        self.assertEqual(self.app.connection['state'],'cancelled')
+        self.assertIn(['/usr/bin/open','/Applications/WeChat.app'],calls)
+
     def test_unvalidated_client_is_rejected_before_any_wechat_quit(self):
         with patch.object(self.app,'preflight',return_value={'connection_supported':False}),patch('subprocess.run') as run:
             with self.assertRaisesRegex(ValueError,'wechat_version_not_validated'):self.app.begin_connection('auto','fixture',True)

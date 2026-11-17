@@ -90,7 +90,10 @@ class EncryptedWorkspace:
                     except OSError:pass
         finally:
             if self.lock is not None:os.close(self.lock);self.lock=None
-    def __exit__(self,*_):self.close()
+    def __exit__(self,kind,error,_trace):
+        # An unfinished worker may still use the volume. Keep its mount and lock.
+        if error is not None and str(error)=='connection_cleanup_incomplete':return False
+        self.close()
 
 
 def create(image,password,size='20g'):

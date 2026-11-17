@@ -61,6 +61,7 @@ class DesktopWorkbench(Workbench):
         self.connection_process = None
         self.connection_thread = None
         self.connection_context = {}
+        self.connection_stop=threading.Event()
         self.pending_credentials = None
         super().__init__(store.home / 'archive', store.home / 'cache')
         for key_file in sorted((store.home / 'connection-attempts').glob('*/verified-keys.json')):
@@ -242,6 +243,7 @@ class DesktopWorkbench(Workbench):
             raise ValueError('select_account_first')
         attempt = self.store.home / 'connection-attempts' / secrets.token_hex(12)
         import time
+        self.connection_stop.clear()
         self.connection_context = {'started_at':int(time.time()),'label':label[:100]}
         self.connection = {'state': 'preparing'}
         def worker():
@@ -252,9 +254,15 @@ class DesktopWorkbench(Workbench):
                     requested = subprocess.run(['/usr/bin/osascript', '-e', 'tell application id "com.tencent.xinWeChat" to quit'],
                                                capture_output=True, timeout=60)
                     from .macos.bootstrap import wechat_process_paths
+                    if self.connection_stop.is_set():
+                        if requested.returncode==0 and not wechat_process_paths():
+                            subprocess.run(['/usr/bin/open','/Applications/WeChat.app'],capture_output=True,timeout=15)
+                        self.connection={'state':'cancelled'};return
                     if requested.returncode or wechat_process_paths():
                         self.connection = {'state': 'awaiting_quit'}
                         return
+                if self.connection_stop.is_set():
+                    self.connection={'state':'cancelled'};return
                 if getattr(sys, 'frozen', False):
                     command = [sys.executable, '--bootstrap']
                 else:
@@ -275,7 +283,7 @@ class DesktopWorkbench(Workbench):
                     self.connection = {'state': {'login_required': 'waiting_for_login', 'child_started': 'waiting_for_login',
                         'keys_verified': 'verifying', 'original_restored': 'restored'}.get(event, self.connection['state'])}
                 rc = self.connection_process.wait()
-                if rc == 130:
+                if rc == 130 or self.connection_stop.is_set() and not recovery_required:
                     self.connection = {'state': 'cancelled'}
                     return
                 if rc == 3 and not recovery_required:
@@ -294,11 +302,17 @@ class DesktopWorkbench(Workbench):
         return {'state': 'preparing'}
 
     def close(self):
-        if self.connection_process and self.connection_process.poll() is None:
-            self.connection_process.terminate()
-        if self.connection_thread and self.connection_thread.is_alive():
-            self.connection_thread.join(timeout=30)
+        import time
+        self.connection_stop.set()
+        deadline=time.monotonic()+120;terminated=set()
+        while self.connection_thread and self.connection_thread.is_alive():
+            process=self.connection_process
+            if process and id(process) not in terminated and process.poll() is None:
+                process.terminate();terminated.add(id(process))
+            self.connection_thread.join(timeout=.1)
+            if time.monotonic()>deadline:raise RuntimeError('connection_cleanup_incomplete')
         super().close()
+
 
 
 class DesktopHandler(Handler):

@@ -169,6 +169,7 @@ class BrowserHandler(DesktopHandler):
 
 def create_server(app,port):
     server=ThreadingHTTPServer(('127.0.0.1',port),BrowserHandler)
+    server.daemon_threads=False
     server.app=app;server.secret=secrets.token_hex(32);server.ticket=secrets.token_urlsafe(32)
     server.cookie_name='chronicle_session_%d'%server.server_port
     return server

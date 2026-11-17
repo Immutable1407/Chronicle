@@ -283,6 +283,10 @@ class Handler(BaseHTTPRequestHandler):
     def app(self):
         return self.server.app
 
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)
+
     def log_message(self, *_args):
         pass
 
@@ -410,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                         name = name or 'chronicle' + metadata.get('extension', '.bin')
                         return self.file(archive.object_path(row['object_id']), name)
             self.json({'error': 'not_found'}, 404)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
         except (ValueError, KeyError, FileNotFoundError) as error:
             known = {'selection_expired', 'wechat_not_connected', 'select_messages_first','verified_account_identity_required'}
@@ -460,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
                         archive.correct_transcript(data['message'], data['text'])
                     return self.json({'state': 'corrected'})
             self.json({'error': 'not_found'}, 404)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
         except (ValueError, KeyError, TypeError) as error:
             known = {'selection_expired', 'wechat_not_connected', 'select_messages_first','verified_account_identity_required'}
@@ -471,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(app, port=8765):
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    server.daemon_threads=False
     server.app = app
     return server
 

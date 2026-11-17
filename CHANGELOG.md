@@ -8,6 +8,7 @@
 - Mac file inventory and metadata-keyed MD5/SHA-256 caches are reused across resource requests. Changed bytes are revalidated before copying.
 - First connection is gated to the validated Mac client version/build. Unknown clients are rejected before quitting WeChat. Existing archives remain readable offline.
 - Optional AES-256 encrypted Mac workspaces use native APFS sparsebundles, with import, lock and verified encrypted-backup commands. Ordinary workspaces are still plaintext.
+- Graceful shutdown drains file requests and cancels pending connection initialization before encrypted-volume teardown.
 - Core tests now also run on a Mac arm64 hosted runner, including artificial database/debugger fixtures and the encrypted-workspace lifecycle. No real WeChat account is used by CI.
 - New source launches choose an available loopback port and reopen an existing workspace through its private runtime ticket.
 
