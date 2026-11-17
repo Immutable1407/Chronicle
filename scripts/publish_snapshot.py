@@ -8,7 +8,7 @@ import shutil
 ROOT=Path(__file__).resolve().parents[1]
 FILES=['.gitignore','AGENTS.md','LICENSE','README.md','README.zh-CN.md','CONTRIBUTING.md','SECURITY.md',
        'THIRD_PARTY_NOTICES.md','pyproject.toml','run.sh','启动 Chronicle.command',
-       'docs/examples/core-tests.yml','scripts/setup.sh','scripts/publish_snapshot.py',
+       '.github/workflows/tests.yml','scripts/setup.sh','scripts/publish_snapshot.py',
        'config/asr-profile.example.json','tools/mac_wechat_preflight.py','tools/chronicle_mac/README.md',
        'tools/chronicle_mac/requirements-codec.txt',
        'docs/architecture.md','docs/connection.md','docs/agent-setup.md','docs/windows-handoff.md','docs/transcription.md',
