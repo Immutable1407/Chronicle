@@ -117,10 +117,24 @@ def create(image,password,size='20g'):
 def open_workspace(image,port=0,open_browser=True):
     image=Path(image).expanduser().resolve()
     from ..launch import main as launch,reopen
+    if not image.is_dir() or image.suffix!='.sparsebundle':raise ValueError('encrypted_workspace_image_required')
+    if plistlib.loads(run(['isencrypted','-plist',str(image)])).get('encrypted') is not True:raise ValueError('workspace_image_not_encrypted')
     current=mounted(image)
     if current:
-        url=reopen(current[0]/'Chronicle')
+        marker=current[0]/MARKER
+        if not marker.is_file() or json.loads(marker.read_text()).get('format')!='chronicle-macos-encrypted-home':raise ValueError('not_a_chronicle_encrypted_workspace')
+        home=current[0]/'Chronicle';url=reopen(home)
         if url:
+            import urllib.request
+            from ..archive import identity
+            runtime=json.loads((home/'browser-runtime.json').read_text())
+            base='http://127.0.0.1:'+str(runtime['port'])
+            def get(endpoint):
+                request=urllib.request.Request(base+endpoint,headers={'X-Chronicle-Native':runtime['secret']})
+                with urllib.request.urlopen(request,timeout=5) as response:return json.load(response)
+            if not get('/api/status').get('archive_encrypted') or get('/api/health').get('archive')!=identity(str((home/'archive').resolve())):
+                raise ValueError('running_workspace_does_not_match_encrypted_home')
+
             if open_browser:webbrowser.open(url)
             print('Opened the running encrypted workspace.');return
     with EncryptedWorkspace(image) as workspace:

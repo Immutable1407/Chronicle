@@ -15,7 +15,7 @@ import urllib.request
 @unittest.skipUnless(sys.platform=='darwin','macOS encrypted disk images')
 class EncryptedWorkspaceTests(unittest.TestCase):
     def test_archive_server_locks_and_backup_reopens_without_plaintext_export(self):
-        from chronicle.macos.secure_workspace import create,EncryptedWorkspace,backup,mounted
+        from chronicle.macos.secure_workspace import create,EncryptedWorkspace,backup,mounted,open_workspace
         with tempfile.TemporaryDirectory(prefix='chronicle-secure-fixture-') as folder:
             image=Path(folder)/'Fixture.sparsebundle';password=secrets.token_urlsafe(24)
             create(image,password,'256m')
@@ -33,6 +33,9 @@ class EncryptedWorkspaceTests(unittest.TestCase):
                 request=urllib.request.Request(base+'/api/notes',data=json.dumps({'project':project,'text':'Synthetic secret note'}).encode(),headers={'Origin':base,'Content-Type':'application/json'})
                 with client.open(request,timeout=10) as response:self.assertEqual(response.status,201)
                 with self.assertRaises(RuntimeError):backup(image,Path(folder)/'Busy.sparsebundle')
+                # Reopening must keep the running protected volume mounted, not detach it.
+                open_workspace(image,port=0,open_browser=False)
+                self.assertIsNotNone(mounted(image))
             finally:
                 process.send_signal(signal.SIGINT)
                 try:process.wait(timeout=40)
