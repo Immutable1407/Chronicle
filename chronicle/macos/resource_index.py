@@ -40,7 +40,7 @@ class FileIndex:
             self.db.execute('CREATE TEMP TABLE IF NOT EXISTS seen(path TEXT PRIMARY KEY)')
             self.db.execute('DELETE FROM seen');self.db.executemany('INSERT INTO seen VALUES (?)',((p,) for p in seen))
             self.db.execute('DELETE FROM files WHERE path NOT IN (SELECT path FROM seen)')
-        self.last_scan=now
+        self.last_scan=time.monotonic()
 
     def _update(self,relative,stat):
         self.db.execute('INSERT INTO files VALUES (?,?,?,?,?,?,NULL,NULL) ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,ctime=excluded.ctime,device=excluded.device,inode=excluded.inode,md5=NULL,sha256=NULL WHERE files.size!=excluded.size OR files.mtime!=excluded.mtime OR files.ctime!=excluded.ctime OR files.device!=excluded.device OR files.inode!=excluded.inode',

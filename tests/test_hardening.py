@@ -140,6 +140,15 @@ class FileInventory(unittest.TestCase):
             self.assertEqual(index.hash_count,0)
             file.unlink();self.assertEqual(index.find(5,digest),[]);index.close()
 
+    def test_slow_inventory_does_not_immediately_rescan_for_the_next_file(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'fixture').write_bytes(b'data');index=FileIndex(root)
+            with patch('chronicle.macos.resource_index.time.monotonic',side_effect=[0,10,11]):
+                self.assertEqual(len(index.find(4,hashlib.md5(b'data').hexdigest())),1)
+                self.assertEqual(len(index.find(4,hashlib.md5(b'data').hexdigest())),1)
+            self.assertEqual(index.scan_count,1);index.close()
+
     def test_symlinks_and_deleted_entries_never_resolve_to_private_outside_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/'files';root.mkdir();outside=Path(directory)/'private';outside.write_bytes(b'data')
