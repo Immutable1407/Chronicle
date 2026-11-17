@@ -151,7 +151,7 @@ class ArchiveTests(unittest.TestCase):
             self.archive.db.execute('PRAGMA user_version=1')
         self.archive.close()
         self.archive = Archive(self.root / 'archive')
-        self.assertEqual(self.archive.db.execute('PRAGMA user_version').fetchone()[0], 2)
+        self.assertEqual(self.archive.db.execute('PRAGMA user_version').fetchone()[0], 3)
         self.archive.set_people('a' * 64, {'person': '老师'})
         self.archive.set_people('b' * 64, {'person': '另一个账号的人'})
         self.archive.close()

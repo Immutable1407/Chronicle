@@ -39,6 +39,8 @@ def present_message(message, conversation_name='', people=None):
     kind = int(message.get('type_code', 1)) & 0xffffffff
     body = message.get('body', '')
     result = {'id': message.get('id', message.get('archive_identity')), 'timestamp': message['timestamp'],
+              'source_id':message.get('source_id',''),
+              'conversation_id':message.get('conversation_id',message.get('conversation','')),
               'datetime': datetime.fromtimestamp(message['timestamp'], ZoneInfo('Asia/Shanghai')).isoformat(),
               'sender': message.get('sender_name') or people.get(message.get('sender_id', message.get('sender')), '参与者'),
               'conversation': conversation_name or message.get('conversation_name', ''),
@@ -77,6 +79,7 @@ class Workbench:
         # Preserve a venv's executable symlink: resolving it bypasses its site-packages.
         self.codec_python = Path(codec_python).absolute() if codec_python else None
         self.sessions = {}
+        self.file_indexes = {}
         self.lock = threading.RLock()
         with Archive(self.archive_root):
             pass
@@ -92,6 +95,8 @@ class Workbench:
         for session in self.sessions.values():
             shutil.rmtree(session['directory'], ignore_errors=True)
         self.sessions.clear()
+        for index in self.file_indexes.values():index.close()
+        self.file_indexes.clear()
 
     def people(self, source=None):
         source = source or self.source()
@@ -102,21 +107,24 @@ class Workbench:
         own = re.sub(r'_[A-Za-z0-9]{4}$', '', account)
         if account.startswith('wxid_'):
             own = re.match(r'wxid_[^_]+', account).group()
+        own=getattr(source,'principal',None) or own
         names[own] = '我'
         return names
 
+    def bind_source(self, archive, source):
+        for alias in getattr(source,'identity_aliases',[]):archive.bind_account(alias,source.account)
+
     def projects(self):
         with Archive(self.archive_root) as archive:
-            rows = archive.projects()
-            for row in rows:
-                row['message_count'] = archive.db.execute('SELECT count(*) FROM project_messages WHERE project_id=?', (row['id'],)).fetchone()[0]
+            rows=[dict(row) for row in archive.db.execute('SELECT p.*,count(m.message_id) AS message_count FROM projects p LEFT JOIN project_messages m ON m.project_id=p.id GROUP BY p.id ORDER BY p.created_at,p.id')]
             return rows
 
     def status(self):
         try:
             source = self.source()
             conversations = source.conversations()
-            return {'source_available': True, 'conversation_count': len(conversations)}
+            ready=getattr(source,'identity_scheme',None)!='legacy-path-v1'
+            return {'source_available':ready,'conversation_count':len(conversations),'identity_ready':ready}
         except Exception:
             return {'source_available': False}
 
@@ -154,10 +162,17 @@ class Workbench:
         if message_id not in session['messages']:
             raise ValueError('message_not_in_selection')
         if message_id in session['resources']:
-            return session['resources'][message_id]
+            previous=session['resources'][message_id]
+            if previous is None or previous.get('status')=='copied' or time.monotonic()-session.get('resource_times',{}).get(message_id,0)<5:
+                return previous
         message = session['messages'][message_id]
         _, collect, store_bytes = mac_modules()
-        rows = collect(session['source'], [message], session['directory'])
+        source=session['source']
+        location=str(source.root.resolve())
+        if location not in self.file_indexes:
+            from .macos.resource_index import FileIndex
+            self.file_indexes[location]=FileIndex(source.root.parent/'msg/file',self.cache/'file-index'/(identity(location)+'.sqlite3'))
+        rows = collect(source, [message], session['directory'],file_index=self.file_indexes[location])
         if not rows:
             return None
         record = rows[0]
@@ -173,6 +188,7 @@ class Workbench:
                 record['voice_playback_asset'] = store_bytes(session['directory'] / 'assets', output.read_bytes(), '.wav')
                 output.unlink()
         session['resources'][message_id] = record
+        session.setdefault('resource_times',{})[message_id]=time.monotonic()
         return record
 
     def source_media(self, token, message):
@@ -206,6 +222,7 @@ class Workbench:
         try:
             for token, chosen in grouped.items():
                 session = self.session(token)
+                if getattr(session['source'],'identity_scheme',None)=='legacy-path-v1':raise ValueError('verified_account_identity_required')
                 accounts.add(session['source'].account)
                 names[session['conversation']['conversation_id']] = session['conversation']['display_name']
                 for key in chosen:
@@ -221,6 +238,7 @@ class Workbench:
                 raise ValueError('selection_accounts_mismatch')
             with Archive(self.archive_root) as archive:
                 account = accounts.pop()
+                for token in grouped:self.bind_source(archive,self.session(token)['source'])
                 report = archive.import_messages(project, {'account_fingerprint': account, 'messages': list(messages.values())},
                                                   list(records.values()), directory / 'assets', names=names)
                 people = self.people()
@@ -232,21 +250,10 @@ class Workbench:
         finally:
             shutil.rmtree(directory)
 
-    def timeline(self, project, date=None):
-        try:
-            source = self.source()
-            people = self.people(source)
-        except Exception:
-            source, people = None, {}
+    def timeline(self, project, date=None, *, after=None, query='', source='', files=False, limit=100):
         with Archive(self.archive_root) as archive:
-            rows = archive.timeline(project, date)
-            all_rows = rows if not date else archive.timeline(project)
-            if source:
-                actors = {r['sender'] for r in all_rows if r['account'] == source.account}
-                archive.set_people(source.account, {person: name for person, name in people.items() if person in actors})
-                for row in rows:
-                    if row['account'] == source.account and row['sender'] in people:
-                        row['sender_name'] = people[row['sender']]
+            page=archive.timeline_page(project,date,limit=limit,after=after,query=query,source=source,files=files)
+        rows=page.pop('messages');people={}
         result = []
         for row in rows:
             item = present_message(row, people=people)
@@ -263,9 +270,7 @@ class Workbench:
                 if metadata.get('name'):
                     item['title'] = metadata['name']
             result.append(item)
-        return {'messages': result, 'days': dict(Counter(row['datetime'][:10] for row in all_rows)),
-                'total': len(all_rows), 'sources': len({r['source_id'] for r in all_rows if r['account'] != 'manual'}),
-                'resources': sum(not is_quoted_reply(r) and any(a['role'] == 'primary' for a in r['attachments']) for r in all_rows)}
+        return dict(page,messages=result)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -377,7 +382,9 @@ class Handler(BaseHTTPRequestHandler):
                     cursor = json.loads(query['before'][0]) if query.get('before') else None
                     return self.json(self.app.browse(query['conversation'][0], cursor))
                 if path == '/api/timeline':
-                    return self.json(self.app.timeline(query['project'][0], query.get('date', [None])[0]))
+                    return self.json(self.app.timeline(query['project'][0], query.get('date', [None])[0],
+                        after=json.loads(query['after'][0]) if query.get('after') else None, query=query.get('q',[''])[0],
+                        source=query.get('source',[''])[0], files=query.get('mode',[''])[0]=='files',limit=int(query.get('limit',['100'])[0])))
                 if path == '/api/source-media':
                     return self.json(self.app.source_media(query['token'][0], query['message'][0]))
                 if path.startswith('/source-assets/'):
@@ -392,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                     if len(parts) != 4:
                         raise ValueError('asset_not_found')
                     with Archive(self.app.archive_root) as archive:
-                        row = archive.db.execute('SELECT * FROM attachments WHERE message_id=? AND role=?', (parts[2], parts[3])).fetchone()
+                        row = archive.db.execute('SELECT * FROM attachments WHERE message_id=? AND role=?', (archive.resolve_message(parts[2]), parts[3])).fetchone()
                         if not row or not row['object_id']:
                             raise ValueError('asset_not_found')
                         metadata = json.loads(row['metadata'])
@@ -403,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (ValueError, KeyError, FileNotFoundError) as error:
-            known = {'selection_expired', 'wechat_not_connected', 'select_messages_first'}
+            known = {'selection_expired', 'wechat_not_connected', 'select_messages_first','verified_account_identity_required'}
             self.json({'error': str(error) if str(error) in known else 'request_unavailable'}, 400)
         except Exception:
             self.json({'error': 'operation_failed'}, 500)
@@ -453,7 +460,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (ValueError, KeyError, TypeError) as error:
-            known = {'selection_expired', 'wechat_not_connected', 'select_messages_first'}
+            known = {'selection_expired', 'wechat_not_connected', 'select_messages_first','verified_account_identity_required'}
             self.json({'error': str(error) if str(error) in known else 'request_unavailable'}, 400)
         except Exception:
             self.json({'error': 'operation_failed'}, 500)

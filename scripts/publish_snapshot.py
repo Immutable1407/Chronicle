@@ -7,11 +7,12 @@ import shutil
 
 ROOT=Path(__file__).resolve().parents[1]
 FILES=['.gitignore','AGENTS.md','LICENSE','README.md','README.zh-CN.md','CONTRIBUTING.md','SECURITY.md',
-       'THIRD_PARTY_NOTICES.md','pyproject.toml','run.sh','启动 Chronicle.command',
-       '.github/workflows/tests.yml','scripts/setup.sh','scripts/publish_snapshot.py',
+       'THIRD_PARTY_NOTICES.md','CHANGELOG.md','pyproject.toml','run.sh','启动 Chronicle.command',
+       '.github/workflows/tests.yml','scripts/setup.sh','scripts/publish_snapshot.py','scripts/benchmark.py',
        'config/asr-profile.example.json','tools/mac_wechat_preflight.py','tools/chronicle_mac/README.md',
        'tools/chronicle_mac/requirements-codec.txt',
        'docs/architecture.md','docs/connection.md','docs/agent-setup.md','docs/windows-handoff.md','docs/transcription.md',
+       'docs/account-identity.md','docs/encrypted-workspace.md','docs/mac-hardening.md','docs/performance.json',
        'docs/screenshots/workbench.png','docs/screenshots/first-use.png',
        'docs/screenshots/connection-login.png','docs/screenshots/account-confirm.png']
 
@@ -29,7 +30,7 @@ def inputs():
 def audit(paths):
     failures=[]
     patterns=[r'/'+r'Users/[^/\s]+/',r'gh[pousr]_[A-Za-z0-9]{20,}',r'github_pat_[A-Za-z0-9_]{20,}',
-              r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'wxid_[A-Za-z0-9]{6,}',
+              r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'wxid_(?!fixture)[A-Za-z0-9]{6,}',
               r'(?i)[\"\']raw_key[\"\']\s*:\s*[\"\'][a-f0-9]{64,}[\"\']']
     for path in paths:
         if path.is_symlink() or not path.is_file():failures.append(str(path.relative_to(ROOT))+': missing or symlink');continue

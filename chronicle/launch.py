@@ -47,7 +47,7 @@ class BrowserWorkbench(DesktopWorkbench):
 
     def status(self):
         result = super().status()
-        result.update(desktop=False, setup_available=True, mode='source')
+        result.update(desktop=False, setup_available=True, mode='source',archive_encrypted=bool(getattr(self,'encrypted_home',False)))
         return result
 
     def desktop_state(self):
@@ -65,19 +65,14 @@ class BrowserWorkbench(DesktopWorkbench):
             except (OSError,ValueError):continue
         self.candidates = {}
         result=[];seen=set()
-        from .macos.reader import MacSource,text_literal
+        from .macos.reader import MacSource
         for path in paths:
             try:
                 source=MacSource(path)
                 if source.account in seen:continue
+                if not source.principal:continue
                 count=len(source.conversations())
-                account=source.root.parent.name
-                import re
-                own=re.match(r'wxid_[^_]+',account).group() if account.startswith('wxid_') else re.sub(r'_[A-Za-z0-9]{4}$','',account)
-                with source.open('contact/contact.db') as db:
-                    rows=db.query('SELECT nick_name,remark FROM contact WHERE username='+text_literal(own)+' LIMIT 1')
-                label=(rows[0]['nick_name'] or rows[0]['remark']) if rows else None
-                label=label or '已验证的本机账号'
+                label=source.account_info()['nickname'] or '已验证的本机账号'
                 key=identity(str(path))
                 self.candidates[key]=path
                 result.append({'id':key,'label':label,'conversation_count':count,'current':path==self.legacy_keys})
@@ -167,7 +162,7 @@ class BrowserHandler(DesktopHandler):
                     return self.json({'saved':True})
             return self.json({'error':'not_found'},404)
         except Exception as error:
-            known={'developer_tools_required','source_dependencies_required','quit_wechat_first','select_account_first','connection_already_running','connection_candidate_expired','account_confirmation_required','invalid_profile_label','profile_not_found','demo_read_only_setup'}
+            known={'wechat_version_not_validated','verified_account_identity_required','developer_tools_required','source_dependencies_required','quit_wechat_first','select_account_first','connection_already_running','connection_candidate_expired','account_confirmation_required','invalid_profile_label','profile_not_found','demo_read_only_setup'}
             code=str(error) if str(error) in known else 'keychain_permission_required' if str(error).startswith('keychain_') else 'setup_operation_failed'
             return self.json({'error':code},400)
 
@@ -196,14 +191,20 @@ def reopen(home):
     except (OSError,ValueError,KeyError,TypeError):return None
 
 
-def main():
+def main(*,encrypted_home=False):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home',type=Path)
     parser.add_argument('--config',type=Path,help='Existing workspace configuration; contents stay private')
-    parser.add_argument('--port',type=int,default=8766)
+    parser.add_argument('--port',type=int,default=0)
     parser.add_argument('--open',action='store_true')
     parser.add_argument('--demo',action='store_true')
+    parser.add_argument('--secure-home',type=Path,help='Open a dedicated encrypted macOS sparsebundle')
     args=parser.parse_args()
+    if args.secure_home:
+        if args.home or args.config or args.demo:parser.error('--secure-home cannot be combined with --home, --config or --demo')
+        if sys.platform!='darwin':parser.error('--secure-home requires macOS')
+        from .macos.secure_workspace import open_workspace
+        return open_workspace(args.secure_home,args.port,args.open)
     home=args.home or application_home()
     runtime_home=Path(home)/'demo' if args.demo else Path(home)
     if args.open and (url:=reopen(runtime_home)):
@@ -217,6 +218,7 @@ def main():
         app=BrowserWorkbench(DesktopStore(home),legacy=(base/config['wechat_keys']) if config.get('wechat_keys') else None,
             archive=(base/config['archive']) if config.get('archive') else None,
             codec_python=(base/config['codec_python']) if config.get('codec_python') else None)
+    app.encrypted_home=encrypted_home
     try:server=create_server(app,args.port)
     except OSError:
         app.close();raise SystemExit('Port is in use. Choose a different --port.')

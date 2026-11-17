@@ -160,6 +160,11 @@ class SourceSession(unittest.TestCase):
         self.assertFalse(path.exists());self.assertIsNone(self.app.pending_credentials)
         self.assertEqual(self.app.connection['state'],'cancelled')
 
+    def test_unvalidated_client_is_rejected_before_any_wechat_quit(self):
+        with patch.object(self.app,'preflight',return_value={'connection_supported':False}),patch('subprocess.run') as run:
+            with self.assertRaisesRegex(ValueError,'wechat_version_not_validated'):self.app.begin_connection('auto','fixture',True)
+            run.assert_not_called()
+
     def test_missing_dependencies_are_detected_before_exit(self):
         with patch.object(self.app,'preflight',return_value={'developer_tools_ready':True,'dependencies_ready':False}),patch('subprocess.run') as run:
             with self.assertRaisesRegex(ValueError,'source_dependencies_required'):self.app.begin_connection('fixture','fixture',True)

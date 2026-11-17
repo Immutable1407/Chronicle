@@ -18,9 +18,12 @@ Create a project → select messages across WeChat conversations → revisit the
 - Play decoded voice, add or correct its text, and use an optional transcription adapter when you configure a provider.
 - Preserve a lightweight quoted-message snapshot alongside the reply. No recursive import of unrelated history.
 - Add manual notes and files for conversations outside WeChat.
+- Keep account identities stable across verified database relocation, with legacy archive compatibility.
+- Page large timelines and search the complete project on the server.
+- Optionally store archives and caches in a native encrypted Mac workspace.
 - Guide first-time users through three steps; explore an isolated demo before connecting an account.
 
-**Early development, source-first.** The supported connection target is macOS on Apple Silicon; the current adapter was tested with WeChat 4.1.15. Other versions and Intel Macs need validation. The archive core is platform-independent; Windows connection work is planned separately. The interface currently uses Simplified Chinese. DMG/EXE distribution is deferred until the development version stabilizes.
+**Early development, source-first.** The supported connection target is macOS on Apple Silicon; the current first-connection adapter is gated to the validated WeChat 4.1.15 / build 270115. Other versions/builds and Intel Macs need validation before initialization. The archive core is platform-independent; Windows connection work is planned separately. The interface currently uses Simplified Chinese. DMG/EXE distribution is deferred until the development version stabilizes.
 
 ## Try without connecting WeChat
 
@@ -57,7 +60,7 @@ If a signed-in browser loses its local session, run `./run.sh` again: the launch
 
 ## Local storage and privacy
 
-By default, settings, archives and caches live in `~/Library/Application Support/Chronicle/`; `--home PATH` creates a separate workspace. New connections use macOS Keychain. Previously verified connection files can be imported explicitly; those source files remain your responsibility. No chats, keys, usage analytics or telemetry are uploaded automatically. Local archives contain readable text and copied media; they are not encrypted at rest by Chronicle.
+By default, settings, archives and caches live in `~/Library/Application Support/Chronicle/`; `--home PATH` creates a separate workspace. New connections use macOS Keychain. Previously verified connection files can be imported explicitly; those source files remain your responsibility. No chats, keys, usage analytics or telemetry are uploaded automatically. Local archives contain readable text and copied media; ordinary workspaces are not encrypted at rest. For native AES-256 encrypted storage, archive import and encrypted backups, use the optional [Mac encrypted workspace](docs/encrypted-workspace.md).
 
 Cloud transcription is optional and has no default provider or API key. Configure a profile and explicitly run a job to send its audio to that provider. The current UI supports playback and manual text; provider jobs are a CLI interface, not a finished cloud setup screen. See [transcription](docs/transcription.md).
 
@@ -69,6 +72,8 @@ python3 -m unittest discover -s tests -q
 python3 -m unittest discover -s tools/chronicle_mac -p 'test_*.py' -q
 python3 -m chronicle.doctor
 ```
+
+See the [0.3 Mac hardening and performance evidence](docs/mac-hardening.md), [schema/identity contract](docs/account-identity.md) and [changelog](CHANGELOG.md). Stop older running source processes before upgrading the archive schema.
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), [agent setup](docs/agent-setup.md) and [Windows handoff](docs/windows-handoff.md). UI assets are plain HTML/CSS/JavaScript; the backend uses Python and SQLite. No frontend build step is required.
 

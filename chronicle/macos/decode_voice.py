@@ -19,7 +19,7 @@ def decode(source, output):
     if b'#!SILK_V3' not in header:
         raise RuntimeError('unsupported_voice_container')
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with tempfile.TemporaryDirectory(prefix='chronicle-pcm-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='chronicle-pcm-',dir=output.parent) as temporary:
         pcm = Path(temporary) / 'voice.pcm'
         pilk.decode(str(source), str(pcm), pcm_rate=24000)
         data = pcm.read_bytes()

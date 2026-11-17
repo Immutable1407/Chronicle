@@ -56,6 +56,10 @@ def main():
     note.add_argument('--sender', default='我')
     note.add_argument('--at', help='ISO-8601 time including timezone')
     commands.add_parser('verify')
+    commands.add_parser('accounts')
+    binding=commands.add_parser('bind-account')
+    binding.add_argument('--legacy',required=True)
+    binding.add_argument('--connection',type=Path,required=True)
     queue = commands.add_parser('queue-transcription')
     queue.add_argument('--message', required=True)
     queue.add_argument('--profile', type=Path, required=True)
@@ -79,6 +83,13 @@ def main():
             names = {r['conversation_id']: r['display_name'] for r in read_json(args.conversations)['conversations']} if args.conversations else {}
             result = archive.import_messages(args.project, read_json(args.messages), resources, assets,
                 read_json(args.selection) if args.selection else None, names)
+        elif args.command == 'accounts':
+            result={'accounts':[dict(row) for row in archive.db.execute('SELECT s.account,count(DISTINCT s.id) AS conversations,count(m.id) AS messages FROM sources s LEFT JOIN messages m ON m.source_id=s.id GROUP BY s.account')]}
+        elif args.command == 'bind-account':
+            from .macos.reader import MacSource
+            source=MacSource(args.connection)
+            if not source.principal:raise ValueError('verified_account_identity_required')
+            result=archive.bind_account(args.legacy,source.account)
         elif args.command == 'timeline':
             rows = archive.timeline(args.project, args.date, args.timezone)
             write_json(args.output, {'project_id': args.project, 'timezone': args.timezone, 'messages': rows})

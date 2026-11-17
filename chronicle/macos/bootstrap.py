@@ -84,6 +84,8 @@ def restore_original(original, shadow, expected_digest, copy_created):
 def initialize(original, state, roots, timeout):
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise RuntimeError('native_arm64_macos_required')
+    from .compatibility import compatibility
+    if not compatibility(original)['connection_supported']:raise RuntimeError('wechat_version_not_validated')
     if os.geteuid() == 0:
         raise RuntimeError('do_not_run_as_root')
     if wechat_process_paths():

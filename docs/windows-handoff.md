@@ -28,3 +28,7 @@ A source exposes account fingerprint, `conversations()` and `message_page(conver
 - Verify cancellation/recovery as well as successful connection on real Windows hardware.
 
 Distribution is source-first for now. Future Mac DMG and Windows EXE releases can be built by their respective maintainers. Package signing, updates and version compatibility remain separate platform responsibilities. Coordinate archive schema migrations before either platform releases a change that affects shared data.
+
+## Shared contracts updated in 0.3
+
+Archive schema 3 and the timeline cursor API are documented in [account identity](account-identity.md) and [Mac hardening](mac-hardening.md). Reuse the common identity helper when the same verified internal principal is available. Old archived IDs are opaque and can resolve through aliases; do not recompute or overwrite them. Windows source acquisition remains separate. The optional Mac encrypted sparsebundle is a platform-specific storage wrapper, not a Windows encrypted file format.

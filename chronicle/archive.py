@@ -41,7 +41,7 @@ CREATE INDEX message_order ON messages(timestamp,source_id,sequence,id);
 CREATE TABLE project_messages(project_id TEXT REFERENCES projects(id),message_id TEXT REFERENCES messages(id),
     added_at INTEGER NOT NULL,PRIMARY KEY(project_id,message_id));
 CREATE TABLE observations(message_id TEXT REFERENCES messages(id),digest TEXT NOT NULL,payload TEXT NOT NULL,
-    observed_at INTEGER NOT NULL,PRIMARY KEY(message_id,digest));
+    observed_at INTEGER NOT NULL,semantic_digest TEXT NOT NULL,PRIMARY KEY(message_id,digest));
 CREATE TABLE objects(digest TEXT PRIMARY KEY,bytes INTEGER NOT NULL,path TEXT NOT NULL UNIQUE);
 CREATE TABLE attachments(message_id TEXT REFERENCES messages(id),role TEXT NOT NULL,
     object_id TEXT REFERENCES objects(digest),status TEXT NOT NULL,metadata TEXT NOT NULL,
@@ -60,7 +60,11 @@ CREATE TABLE message_jobs(message_id TEXT REFERENCES messages(id),job_id TEXT RE
     PRIMARY KEY(message_id,job_id));
 CREATE TABLE transcript_edits(id INTEGER PRIMARY KEY,message_id TEXT REFERENCES messages(id),
     text TEXT NOT NULL,created_at INTEGER NOT NULL);
-PRAGMA user_version=2;
+CREATE TABLE account_aliases(alias TEXT PRIMARY KEY,account TEXT NOT NULL);
+CREATE TABLE message_aliases(alias TEXT PRIMARY KEY,message_id TEXT NOT NULL REFERENCES messages(id));
+CREATE INDEX observations_semantic ON observations(message_id,semantic_digest);
+CREATE INDEX project_messages_message ON project_messages(message_id,project_id);
+PRAGMA user_version=3;
 '''
 
 
@@ -77,6 +81,7 @@ class Archive:
         self.db = sqlite3.connect(path, timeout=5)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA foreign_keys=ON')
+        self.db.execute('PRAGMA temp_store=MEMORY')
         if new:
             self.db.executescript(SCHEMA)
         version = self.db.execute('PRAGMA user_version').fetchone()[0]
@@ -86,7 +91,21 @@ class Archive:
                 self.db.execute('CREATE TABLE IF NOT EXISTS people(account TEXT NOT NULL,person TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(account,person))')
                 self.db.execute('PRAGMA user_version=2')
             version = 2
-        if version != 2:
+        if version == 2:
+            from .account_identity import semantic_payload
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                columns={row[1] for row in self.db.execute('PRAGMA table_info(observations)')}
+                if 'semantic_digest' not in columns:self.db.execute('ALTER TABLE observations ADD COLUMN semantic_digest TEXT')
+                self.db.create_function('chronicle_semantic',1,lambda value:identity(semantic_payload(value)))
+                self.db.execute('UPDATE observations SET semantic_digest=chronicle_semantic(payload) WHERE semantic_digest IS NULL')
+                self.db.execute('CREATE TABLE IF NOT EXISTS account_aliases(alias TEXT PRIMARY KEY,account TEXT NOT NULL)')
+                self.db.execute('CREATE TABLE IF NOT EXISTS message_aliases(alias TEXT PRIMARY KEY,message_id TEXT NOT NULL REFERENCES messages(id))')
+                self.db.execute('CREATE INDEX IF NOT EXISTS observations_semantic ON observations(message_id,semantic_digest)')
+                self.db.execute('CREATE INDEX IF NOT EXISTS project_messages_message ON project_messages(message_id,project_id)')
+                self.db.execute('PRAGMA user_version=3')
+            version=3
+        if version != 3:
             self.db.close()
             raise RuntimeError('unsupported_archive_version')
         self.db.execute('PRAGMA journal_mode=WAL')
@@ -116,7 +135,17 @@ class Archive:
         if not self.db.execute('SELECT 1 FROM projects WHERE id=?', (project,)).fetchone():
             raise ValueError('project_not_found')
 
+    def resolve_message(self, message):
+        from .account_identity import resolve_message
+        return resolve_message(self,message)
+
+    def bind_account(self, alias, account):
+        from .account_identity import bind_account
+        return bind_account(self,alias,account)
+
     def set_people(self, account, names):
+        from .account_identity import resolve_account
+        account=resolve_account(self,account)
         with self.db:
             for person, name in names.items():
                 if person and name:
@@ -142,7 +171,7 @@ class Archive:
                 target.flush()
                 os.fsync(target.fileno())
             after = path.stat()
-            if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+            if (before.st_mtime_ns,before.st_ctime_ns,before.st_size,before.st_ino,before.st_dev) != (after.st_mtime_ns,after.st_ctime_ns,after.st_size,after.st_ino,after.st_dev):
                 raise ValueError('asset_changed_during_copy')
             digest = digest.hexdigest()
             parent = directory / digest[:2]
@@ -197,6 +226,9 @@ class Archive:
         account = bundle.get('account_fingerprint')
         if not isinstance(account, str) or not re.fullmatch('[0-9a-f]{64}', account):
             raise ValueError('account_fingerprint_required')
+        incoming_account=account
+        from .account_identity import resolve_account,semantic_payload
+        account=resolve_account(self,account)
         messages = bundle.get('messages')
         if not isinstance(messages, list):
             raise ValueError('messages_must_be_list')
@@ -228,12 +260,15 @@ class Archive:
                     conversation = message['conversation_id']
                     server = str(message.get('server_id') or '0')
                     source_key = server if server != '0' else message['source_database'] + ':' + str(message['local_id'])
-                    if key != identity(account, conversation, source_key):
+                    incoming_key=key
+                    if key != identity(incoming_account, conversation, source_key):
                         raise ValueError('message_identity_mismatch')
+                    key=self.resolve_message(identity(account,conversation,source_key))
                     report['selected'] += 1
                     source = identity(account, conversation)
                     self.db.execute('INSERT OR IGNORE INTO sources VALUES (?,?,?,?)',
                         (source, account, conversation, names.get(conversation, conversation)))
+                    source=self.db.execute('SELECT id FROM sources WHERE account=? AND conversation=?',(account,conversation)).fetchone()['id']
                     if conversation in names:
                         self.db.execute('UPDATE sources SET name=? WHERE id=?', (names[conversation], source))
                     raw = canonical(message)
@@ -244,16 +279,16 @@ class Archive:
                              int(message.get('sort_sequence', message['local_id'])), int(message['type_code']),
                              message.get('body', ''), 'second', raw))
                         report['new_messages'] += 1
-                    elif existing['raw_json'] != raw:
+                    elif semantic_payload(existing['raw_json']) != semantic_payload(raw):
                         report['source_conflicts'] += 1
-                    self.db.execute('INSERT OR IGNORE INTO observations VALUES (?,?,?,?)',
-                                    (key, identity(raw), raw, int(time.time())))
+                    self.db.execute('INSERT OR IGNORE INTO observations VALUES (?,?,?,?,?)',
+                                    (key, identity(raw), raw, int(time.time()),identity(semantic_payload(raw))))
                     report['linked_to_project'] += self.db.execute('INSERT OR IGNORE INTO project_messages VALUES (?,?,?)',
                             (project, key, int(time.time()))).rowcount
                     self.db.execute('INSERT OR IGNORE INTO batch_messages VALUES (?,?)', (batch, key))
                     if is_quoted_reply(message):
                         continue  # A quote snapshot never imports the referenced message or file.
-                    resource = resource_map.get(key)
+                    resource = resource_map.get(incoming_key)
                     if resource is None:
                         if int(message['type_code']) & 0xffffffff in (3, 34, 43, 49):
                             self._link_asset(key, 'primary', None, 'not_collected', {})
@@ -325,41 +360,17 @@ class Archive:
         return message
 
     def timeline(self, project, date=None, timezone='Asia/Shanghai'):
-        self._require_project(project)
-        zone = ZoneInfo(timezone)
-        parameters = [project]
-        condition = ''
-        if date:
-            start = datetime.combine(datetime.strptime(date, '%Y-%m-%d').date(), day_time(), zone)
-            end = start + timedelta(days=1)
-            condition = ' AND m.timestamp>=? AND m.timestamp<?'
-            parameters.extend([int(start.timestamp()), int(end.timestamp())])
-        rows = self.db.execute('SELECT m.*,s.name AS conversation_name,s.conversation,s.account FROM messages m '
-            'JOIN project_messages p ON p.message_id=m.id JOIN sources s ON s.id=m.source_id '
-            'WHERE p.project_id=?' + condition + ' ORDER BY m.timestamp,m.source_id,m.sequence,m.id', parameters)
-        output = []
-        for row in rows:
-            record = dict(row)
-            record.pop('raw_json')
-            record['datetime'] = datetime.fromtimestamp(record['timestamp'], zone).isoformat()
-            person = self.db.execute('SELECT name FROM people WHERE account=? AND person=?',
-                                     (record['account'], record['sender'])).fetchone()
-            record['sender_name'] = person['name'] if person else record['sender']
-            record['source_observations'] = self.db.execute('SELECT count(*) FROM observations WHERE message_id=?',
-                                                            (record['id'],)).fetchone()[0]
-            record['source_conflict'] = record['source_observations'] > 1
-            record['attachments'] = []
-            for asset in self.db.execute('SELECT * FROM attachments WHERE message_id=? ORDER BY role', (record['id'],)):
-                value = dict(asset)
-                value['metadata'] = json.loads(value['metadata'])
-                if value['object_id']:
-                    value['archive_path'] = self.db.execute('SELECT path FROM objects WHERE digest=?', (value['object_id'],)).fetchone()['path']
-                record['attachments'].append(value)
-            record['transcript'] = self.transcript(record['id'])
-            output.append(record)
-        return output
+        from .timeline import select_rows
+        return select_rows(self,project,date,timezone)[0]
+
+    def timeline_page(self, project, date=None, timezone='Asia/Shanghai', **options):
+        from .timeline import select_rows,summary
+        options.setdefault('limit',100)
+        rows,cursor,matched=select_rows(self,project,date,timezone,**options)
+        return dict(summary(self,project,timezone),messages=rows,next=cursor,matched=matched)
 
     def transcript(self, message):
+        message=self.resolve_message(message)
         correction = self.db.execute('SELECT text FROM transcript_edits WHERE message_id=? ORDER BY id DESC LIMIT 1', (message,)).fetchone()
         if correction:
             return {'state': 'corrected', 'text': correction['text'], 'origin': 'manual'}
@@ -368,6 +379,7 @@ class Archive:
         return {'state': job['status'], 'text': job['text'], 'error_code': job['error_code']} if job else {'state': 'not_requested'}
 
     def correct_transcript(self, message, text):
+        message=self.resolve_message(message)
         if not text.strip():
             raise ValueError('transcript_empty')
         row = self.db.execute('SELECT type_code FROM messages WHERE id=?', (message,)).fetchone()

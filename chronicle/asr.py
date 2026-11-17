@@ -104,6 +104,7 @@ class TranscriptionJobs:
         self.archive = archive
 
     def queue(self, message, profile):
+        message=self.archive.resolve_message(message)
         db = self.archive.db
         row = db.execute('SELECT type_code FROM messages WHERE id=?', (message,)).fetchone()
         if row is None or row['type_code'] & 0xffffffff != 34:

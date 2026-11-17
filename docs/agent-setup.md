@@ -44,6 +44,8 @@ python3 -m unittest discover -s tools/chronicle_mac -p 'test_*.py' -q
 node --check chronicle/web/app.js
 ```
 
-The second suite requires macOS and the local libraries. GitHub Actions runs the core suite on Linux with Python 3.11 and 3.13 after pushes and pull requests; the Mac database fixture is skipped there. The workflow is `.github/workflows/tests.yml`. Tests do not initialize a real account. For UI work, check first use, project creation, cross-chat selection, duplicate import, file view, manual note and narrow-screen layout in a real browser. State what was verified; do not equate synthetic tests with real-account acceptance.
+The second suite requires macOS and the local libraries. GitHub Actions runs the core suite on Linux with Python 3.11 and 3.13 after pushes and pull requests; the Mac database fixture is skipped there. The workflow is `.github/workflows/tests.yml`; an additional Mac arm64 job runs the synthetic Mac fixtures and encrypted-image lifecycle. No real WeChat account is used. Tests do not initialize a real account. For UI work, check first use, project creation, cross-chat selection, duplicate import, file view, manual note and narrow-screen layout in a real browser. State what was verified; do not equate synthetic tests with real-account acceptance.
 
 To stop, use `Ctrl+C` in the server terminal. Do not use broad process-name kills. Before publishing, assemble and review the allowlisted snapshot; private local history and research notes are deliberately excluded.
+
+Before a schema-3 source upgrade, stop the older server process and back up the archive. Do not leave an older process operating against a migrated database. Use [identity migration](account-identity.md) and the [encrypted home](encrypted-workspace.md) instructions for the supported paths.

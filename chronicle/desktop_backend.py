@@ -86,9 +86,13 @@ class DesktopWorkbench(Workbench):
             self.manifest = self.vault.get(selected)
         MacSource, _, _ = mac_modules()
         from .macos.core import refresh_manifest
-        if refresh_manifest(self.manifest):
-            self.vault.put(selected, self.manifest)
-        return MacSource(key_data=self.manifest)
+        refreshed=refresh_manifest(self.manifest)
+        source=MacSource(key_data=self.manifest)
+        if source.principal and selected!=source.account:
+            profile=next((p for p in self.store.config['profiles'] if p['id']==selected),{})
+            self._save_profile(source,profile.get('label'),source.account_info())
+        elif refreshed or source.identity_dirty:self.vault.put(selected,self.manifest)
+        return source
 
     def status(self):
         result = super().status()
@@ -104,7 +108,7 @@ class DesktopWorkbench(Workbench):
         mac_modules()
         from .macos.bootstrap import wechat_process_paths
         base = Path.home() / 'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
-        saved={profile['id']:profile for profile in self.store.config['profiles']}
+        saved={profile.get('location_fingerprint',profile['id']):profile for profile in self.store.config['profiles']}
         accounts=[]
         for index,path in enumerate(sorted(base.glob('*/db_storage')),1):
             key=identity(str(path.resolve()));profile=saved.get(key,{})
@@ -119,10 +123,11 @@ class DesktopWorkbench(Workbench):
                     env=dict(os.environ, PYTHONPATH=tool.stdout.decode().strip()), capture_output=True, timeout=15)
                 ready = check.returncode == 0
         from .doctor import report
+        from .macos.compatibility import compatibility
         dependencies=report()
         return {'accounts': accounts, 'developer_tools_ready': ready, 'wechat_running': bool(wechat_process_paths()),
                 'dependencies_ready':dependencies['sqlcipher'] and dependencies['zstd'],
-                'media_ready':dependencies['ffmpeg'] and dependencies['pilk']}
+                'media_ready':dependencies['ffmpeg'] and dependencies['pilk'],**compatibility()}
 
     def import_connection(self, path, label=None):
         path = Path(path)
@@ -134,20 +139,28 @@ class DesktopWorkbench(Workbench):
         if source.root.name != 'db_storage':
             raise ValueError('unexpected_account_directory')
         source.conversations()  # Validate both contact and session schemas before reporting connected.
-        profile = identity(str(source.root))
+        if not source.principal:raise ValueError('verified_account_identity_required')
+        profile = source.account
         account=source.account_info()
-        self.vault.put(profile, manifest)
-        self.store.config['profiles'] = [p for p in self.store.config['profiles'] if p['id'] != profile] + [
-            {'id': profile, 'label': (label or account['nickname'] or '我的微信')[:100], 'nickname':account['nickname'], 'wechat_alias':account['wechat_alias']}]
-        self.store.config['selected_profile'] = profile
-        self.store.save()
+        self._save_profile(source,label,account)
         self.manifest = manifest
         return {'connected': True}
+
+    def _save_profile(self, source, label, account):
+        profile=source.account
+        aliases=set(source.identity_aliases)|{profile}
+        previous=next((p for p in self.store.config['profiles'] if p['id'] in aliases),{})
+        self.vault.put(profile,source.manifest)
+        self.store.config['profiles']=[p for p in self.store.config['profiles'] if p['id'] not in aliases]+[
+            {'id':profile,'label':(label or previous.get('label') or account['nickname'] or '我的微信')[:100],
+             'nickname':account['nickname'],'wechat_alias':account['wechat_alias'],'location_fingerprint':source.legacy_account}]
+        self.store.config['selected_profile']=profile;self.store.save()
 
     def describe_connection(self, path):
         MacSource, _, _ = mac_modules()
         source=MacSource(key_data=json.loads(Path(path).read_text()))
         source.conversations()
+        if not source.principal:raise ValueError('verified_account_identity_required')
         return source.account_info()
 
     def queue_account_confirmation(self, path, label):
@@ -216,6 +229,7 @@ class DesktopWorkbench(Workbench):
         if self.pending_credentials:
             raise ValueError('account_confirmation_required')
         preflight = self.preflight()
+        if not preflight.get('connection_supported',True):raise ValueError('wechat_version_not_validated')
         if not preflight['developer_tools_ready']:
             raise ValueError('developer_tools_required')
         if not preflight.get('dependencies_ready',True):

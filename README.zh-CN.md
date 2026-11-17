@@ -18,9 +18,12 @@
 - 播放解码后的语音，补充或修正文字；配置服务后可通过转写接口处理语音。
 - 引用消息保留回复正文、被引用人和内容摘要；不会递归导入无关历史。
 - 补记线下沟通、文字和单独收到的附件。
+- 账号身份与数据库绝对路径分离，兼容旧档案与已验证的数据目录迁移。
+- 大项目分页浏览，搜索覆盖整个项目；附件检索复用目录与哈希索引。
+- 可选 Mac 原生加密工作区，支持复制导入旧档案和加密备份。
 - 首次使用三步指引，以及不连接微信的独立示例工作区。
 
-**目前是早期开发版，优先源码运行。** 当前直连目标是 Apple Silicon Mac，适配器已在微信 4.1.15 上验证；其他微信版本和 Intel Mac 仍需验证。档案内核与平台解耦，Windows 接入将另行开发。当前界面为简体中文。DMG/EXE 安装包等开发版稳定后再推进。
+**目前是早期开发版，优先源码运行。** 当前直连目标是 Apple Silicon Mac，首次连接限定为已验证的微信 4.1.15 / build 270115；其他版本、构建号和 Intel Mac 需验证后再开放初始化。档案内核与平台解耦，Windows 接入将另行开发。当前界面为简体中文。DMG/EXE 安装包等开发版稳定后再推进。
 
 ## 先体验示例
 
@@ -57,7 +60,7 @@ brew install sqlcipher zstd ffmpeg
 
 ## 存储与隐私
 
-默认数据目录是 `~/Library/Application Support/Chronicle/`，可用 `--home PATH` 指定独立工作区。新建连接保存在 macOS 钥匙串；导入旧连接文件后，原文件仍由你自行保管。聊天、密钥和使用情况不会自动上传，也没有遥测。档案包含可读文字和复制的媒体，Chronicle 目前不对档案做静态加密。
+默认数据目录是 `~/Library/Application Support/Chronicle/`，可用 `--home PATH` 指定独立工作区。新建连接保存在 macOS 钥匙串；导入旧连接文件后，原文件仍由你自行保管。聊天、密钥和使用情况不会自动上传，也没有遥测。档案包含可读文字和复制的媒体，普通工作区仍不做静态加密；需要 AES-256 原生加密存储、旧档案复制导入和加密备份时，可使用[Mac 加密工作区](docs/encrypted-workspace.md)。
 
 云端转写没有默认服务商或 API Key。主动配置 profile 并执行任务后，对应音频才发送到该服务。当前 UI 支持播放和人工补充文字；服务商任务通过 CLI 使用，尚未提供完整的云端配置界面。详见[转写说明](docs/transcription.md)。
 
@@ -69,6 +72,8 @@ python3 -m unittest discover -s tests -q
 python3 -m unittest discover -s tools/chronicle_mac -p 'test_*.py' -q
 python3 -m chronicle.doctor
 ```
+
+本轮变化与实测见 [Mac 加固与性能说明](docs/mac-hardening.md)、[身份与档案格式契约](docs/account-identity.md)和[更新记录](CHANGELOG.md)。升级档案格式前，请先停止旧版源码进程。
 
 Agent 或开发者可以先读 [AGENTS.md](AGENTS.md)、[架构说明](docs/architecture.md)、[Agent 启动说明](docs/agent-setup.md)和 [Windows 协作约定](docs/windows-handoff.md)。界面是原生 HTML/CSS/JavaScript，后端为 Python + SQLite，无需前端构建。
 

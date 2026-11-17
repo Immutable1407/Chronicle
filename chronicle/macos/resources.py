@@ -52,10 +52,10 @@ def voice_bytes(source, message):
     return next(iter(unique)) if len(unique) == 1 else None
 
 
-def collect(source, messages, destination):
+def collect(source, messages, destination, file_index=None):
     destination = Path(destination)
     file_root = source.root.parent / 'msg/file'
-    candidates = [p for p in file_root.rglob('*') if p.is_file() and not p.is_symlink()] if file_root.is_dir() else []
+    owned_index=None
     results = []
     for message in messages:
         kind = message['type_code'] & 0xffffffff
@@ -73,12 +73,21 @@ def collect(source, messages, destination):
             continue  # Referenced attachments are snapshots, not resources to fetch.
         if kind == 49 and xml.findtext('.//appmsg/type') == '6':
             expected = (xml.findtext('.//appmsg/md5') or '').lower()
-            expected_size = int(xml.findtext('.//appattach/totallen') or -1)
+            try:expected_size=int(xml.findtext('.//appattach/totallen') or -1)
+            except (TypeError,ValueError):
+                record['status']='invalid_resource_metadata';results.append(record);continue
             title = xml.findtext('.//appmsg/title') or 'attachment'
-            matches = [p for p in candidates if p.stat().st_size == expected_size and
-                       re.fullmatch('[0-9a-f]{32}', expected) and digest_file(p, 'md5') == expected]
+            if file_index is None:
+                from .resource_index import FileIndex
+                owned_index=file_index=FileIndex(file_root)
+            indexed=file_index.find(expected_size,expected) if re.fullmatch('[0-9a-f]{32}',expected) else []
+            matches=[path for path,_ in indexed]
+            if len({digest for _,digest in indexed})>1:
+                record['status']='file_ambiguous';results.append(record);continue
             if matches:
                 data = matches[0].read_bytes()
+                if len(data)!=expected_size or hashlib.md5(data).hexdigest()!=expected or hashlib.sha256(data).hexdigest()!=indexed[0][1]:
+                    record['status']='file_changed_during_copy';results.append(record);continue
                 extension = Path(title).suffix
                 if not re.fullmatch(r'\.[A-Za-z0-9]{1,12}', extension):
                     extension = '.bin'
@@ -99,6 +108,7 @@ def collect(source, messages, destination):
             from .media import collect_visual
             record.update(collect_visual(source, message, xml, destination))
         results.append(record)
+    if owned_index is not None:owned_index.close()
     save_private(destination / 'resources.json', {'resources': results})
     return results
 

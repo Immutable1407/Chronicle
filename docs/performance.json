@@ -1,0 +1,39 @@
+{
+  "scope": "generated data, local warm cache after import; no real WeChat account",
+  "system": "Darwin",
+  "architecture": "arm64",
+  "python": "3.13.3",
+  "timeline": [
+    {
+      "project_records": 1000,
+      "page_rows": 100,
+      "median_archive_seconds": 0.0041,
+      "workbench_payload_seconds": 0.0046,
+      "select_statements": 11,
+      "response_bytes": 46067
+    },
+    {
+      "project_records": 10000,
+      "page_rows": 100,
+      "median_archive_seconds": 0.0531,
+      "workbench_payload_seconds": 0.0471,
+      "select_statements": 11,
+      "response_bytes": 46070
+    },
+    {
+      "project_records": 100000,
+      "page_rows": 100,
+      "median_archive_seconds": 1.474,
+      "workbench_payload_seconds": 1.4379,
+      "select_statements": 11,
+      "response_bytes": 46093
+    }
+  ],
+  "file_lookup": {
+    "files": 100,
+    "lookups": 200,
+    "inventory_scans": 1,
+    "file_hashes": 100,
+    "seconds": 0.5264
+  }
+}

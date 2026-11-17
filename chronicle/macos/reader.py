@@ -53,12 +53,17 @@ class MacSource:
             raise RuntimeError('expected_one_verified_account')
         self.root = Path(roots.pop()).resolve(strict=True)
         self.entries = {entry['database']: entry for entry in entries}
-        self.account = hashlib.sha256(str(self.root).encode()).hexdigest()
+        self.manifest=key_data
+        self.legacy_account=hashlib.sha256(str(self.root).encode()).hexdigest()
+        from .identity import bind_source
+        self.account,self.identity_aliases,self.principal,self.identity_dirty=bind_source(self,key_data)
+        self.identity_scheme='wechat-internal-user-v1' if self.principal else 'legacy-path-v1'
+        if key_file is not None and self.identity_dirty:save_private(key_file,key_data)
 
     def account_info(self):
         """Read the verified account's own contact; never guess from other contacts."""
         folder=self.root.parent.name
-        username=re.match(r'wxid_[^_]+',folder).group() if folder.startswith('wxid_') else re.sub(r'_[A-Za-z0-9]{4}$','',folder)
+        username=self.principal or (re.match(r'wxid_[^_]+',folder).group() if folder.startswith('wxid_') else re.sub(r'_[A-Za-z0-9]{4}$','',folder))
         with self.open('contact/contact.db') as database:
             rows=database.query('SELECT nick_name,alias FROM contact WHERE username='+text_literal(username)+' LIMIT 1')
         own=rows[0] if rows else {}

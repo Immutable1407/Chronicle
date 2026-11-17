@@ -71,7 +71,7 @@ class DesktopStore:
             incoming = sqlite3.connect((source / 'archive.sqlite3').as_uri() + '?mode=ro', uri=True)
             try:
                 version = incoming.execute('PRAGMA user_version').fetchone()[0]
-                if version not in (1, 2):
+                if version not in (1, 2, 3):
                     raise ValueError('unsupported_archive_version')
                 destination = sqlite3.connect(stage / 'archive.sqlite3')
                 try:

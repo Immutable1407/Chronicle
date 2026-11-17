@@ -11,3 +11,7 @@
 - Verify UI changes in a real browser. No frontend build is needed.
 - Public source is assembled with `python3 scripts/publish_snapshot.py --output .publish/Chronicle`. This is a curated snapshot; private research/acceptance documents and local Git history are not publication inputs. Review the result before pushing. The script does not create repositories or push.
 - Project status and supported workflows are documented in README.md, docs/architecture.md and docs/connection.md. Keep both README languages consistent.
+
+- Schema 3 retains old message IDs through aliases. Read docs/account-identity.md before changing identity or migration code; use docs/mac-hardening.md for the paged HTTP contract.
+- Never label ordinary workspaces encrypted. Native encrypted homes are optional, described in docs/encrypted-workspace.md; do not ask for or log the user’s password.
+- First-connection compatibility is explicitly gated by the validated client version/build. Expand it only with corresponding real-platform evidence; a synthetic debugger fixture is not a new WeChat-version acceptance.

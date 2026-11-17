@@ -107,6 +107,7 @@ class CipherDatabase:
             if self.lib.sqlite3_key(self.handle, key, len(key)):
                 raise RuntimeError('sqlcipher_key_setup_failed')
             self.query('PRAGMA cipher_compatibility=4')
+            self.query('PRAGMA temp_store=MEMORY')
             self.lib.sqlite3_busy_timeout(self.handle, 2000)
             if not fixture_write:
                 self.query('PRAGMA query_only=ON')

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chronicle-workbench"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "A local-first project communication archive for WeChat"
 readme = "README.md"
 requires-python = ">=3.11"

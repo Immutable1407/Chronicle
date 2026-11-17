@@ -211,6 +211,7 @@ def wxgf_preview(raw):
 
 def collect_visual(source, message, xml, destination):
     from .resources import store_bytes
+    destination=Path(destination);destination.mkdir(parents=True,exist_ok=True,mode=0o700)
     video = message['type_code'] & 0xffffffff == 43
     candidates = resource_links(source, message, xml, video)
     if not candidates:
@@ -244,7 +245,7 @@ def collect_visual(source, message, xml, destination):
             extension = image_kind(raw)
             try:
                 preview = wxgf_preview(raw) if extension == '.wxgf' else raw
-                with tempfile.TemporaryDirectory(prefix='chronicle-image-') as temporary:
+                with tempfile.TemporaryDirectory(prefix='chronicle-image-',dir=destination) as temporary:
                     target = Path(temporary) / ('image.png' if extension == '.wxgf' else 'image' + extension)
                     target.write_bytes(preview)
                     details = probe_file(target)

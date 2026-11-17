@@ -1,5 +1,6 @@
 """Lifecycle failure tests; no real app or process is launched."""
 import json
+import plistlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ class RestoreLifecycle(unittest.TestCase):
         self.executable = self.original / 'Contents/MacOS/WeChat'
         self.executable.parent.mkdir(parents=True)
         self.executable.write_bytes(b'artificial-original-binary')
+        (self.original/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleShortVersionString':'4.1.15','CFBundleVersion':'270115'}))
         self.digest = bootstrap.fingerprint(self.executable)
         self.shadow = self.root / 'Temporary.app'
         self.shadow.mkdir()

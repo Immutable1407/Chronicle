@@ -13,13 +13,16 @@ Chronicle archives selected project communication. It does not mirror every conv
 | Mac source | `chronicle/macos/` | Account-local database reader, source identities, resource resolution and explicit connection helpers |
 | Archive | `chronicle/archive.py` | SQLite metadata and content-addressed copied objects; independent of WeChat availability |
 | Transcription | `chronicle/asr.py` | Explicit jobs and provider profile; audio, machine text and manual corrections remain separate |
+| Optional encrypted home | `chronicle/macos/secure_workspace.py` | Native AES-256 Mac image, guarded lifecycle, verified import and encrypted backup |
 | Generated demo | `chronicle/demo.py` | Fake source, synthetic files and silent audio; no WeChat or real vault access |
 
 `tools/chronicle_mac/` retains compatibility entry points and synthetic adapter tests. The supported application entry point is `python -m chronicle.launch`, not the earlier native wrapper. Installation packages are deferred.
 
 ## Archiving behavior
 
-A source message belongs to an account and conversation. Its stable source identity is independent of its display name. A project links selected messages; the same message can belong to multiple projects. Repeated selection is idempotent within a project. Source observations and conflicts are retained rather than silently rewriting the archived event.
+Account identity is independent of the physical database root; see [schema 3 and identity aliases](account-identity.md). A source message belongs to an account and conversation. Its stable source identity is independent of its display name. A project links selected messages; the same message can belong to multiple projects. Repeated selection is idempotent within a project. Source observations and conflicts are retained rather than silently rewriting the archived event.
+
+The workbench reads bounded cursor pages and loads related metadata in batches. Search and source/date/file filters run on the server; grouped SQL queries provide global statistics. See [HTTP contract and measurements](mac-hardening.md).
 
 Resource resolution happens before or during an explicit archive request. Available objects are copied into `archive/objects/<digest-prefix>/<digest>` and referenced by digest. Source files are not moved. Primary data, preview and voice playback are separate roles. Ambiguous or missing assets remain explicit; thumbnails and first-frame previews are labeled. A quoted message stores only the quote snapshot present in the reply, without importing referenced conversations or attachments automatically.
 
@@ -36,7 +39,7 @@ Default home: `~/Library/Application Support/Chronicle/`.
 - `browser-runtime.json`: private runtime secret and port used by the local launcher to reopen the service.
 - `demo/`: independent generated workspace.
 
-`--home` separates workspaces. The legacy `--config` option can bind an existing archive and private verified connection file without changing the old archive. Never commit these runtime files. Back up archives while the service is stopped; include both SQLite and the object directory. No polished backup/restore UI is claimed yet.
+`--home` separates workspaces. The legacy `--config` option can bind an existing archive and private verified connection file without changing the old archive. Never commit these runtime files. Back up archives while the service is stopped; include both SQLite and the object directory. The optional encrypted home has verified CLI import and encrypted-backup commands; a polished backup/restore UI is not claimed.
 
 ## Deliberate limits
 

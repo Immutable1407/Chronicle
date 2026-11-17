@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const state = { projects: [], project: null, data: null, mode: 'timeline', date: '', month: '', sources: new Map(),
   conversations: [], conversation: null, sourceMessages: [], before: null, selected: new Map(),
-  importProject: null, transcriptMessage: null, request: 0, sourceRequest: 0, loadingSource: false, desktop: false, runMode: "legacy", sourceAvailable: false, demo: false, preflight: null, savedProject: null, connectionPhase: "idle", loginDeadline: null };
+  importProject: null, transcriptMessage: null, request: 0, sourceRequest: 0, loadingSource: false, desktop: false, runMode: "legacy", sourceAvailable: false, demo: false, preflight: null, savedProject: null, connectionPhase: "idle", loginDeadline: null, nextTimeline: null, loadingTimeline: false };
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -19,7 +19,7 @@ async function api(path, data) {
 }
 let toastTimer;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
-function errorText(error) { return ({ selection_expired: '选择已过期，请重新打开会话。', select_messages_first: '请先勾选相关消息。', wechat_not_connected: '暂时无法读取本机微信。', developer_tools_required: '首次连接需要 Apple 命令行工具。', connection_candidate_expired: '连接列表已更新，请重新打开设置。', account_confirmation_required:'请先确认识别到的账号，或选择换个账号重试。', invalid_profile_label:'请填写不超过 100 字的账号备注。', keychain_permission_required: '请在系统提示中允许访问钥匙串，然后重试保存连接。' })[error.message] || '暂时无法完成操作，请重试。'; }
+function errorText(error) { return ({ selection_expired: '选择已过期，请重新打开会话。', select_messages_first: '请先勾选相关消息。', wechat_not_connected: '暂时无法读取本机微信。', verified_account_identity_required:'尚未验证账号身份，请重新连接后再归档。', developer_tools_required: '首次连接需要 Apple 命令行工具。', wechat_version_not_validated:'此微信版本尚未验证首次连接兼容性，请查看支持版本；已有档案仍可阅读。', connection_candidate_expired: '连接列表已更新，请重新打开设置。', account_confirmation_required:'请先确认识别到的账号，或选择换个账号重试。', invalid_profile_label:'请填写不超过 100 字的账号备注。', keychain_permission_required: '请在系统提示中允许访问钥匙串，然后重试保存连接。' })[error.message] || '暂时无法完成操作，请重试。'; }
 function empty(title, description, action, label) {
   const node = el('div', 'empty-state'); node.append(el('div', 'empty-symbol', '↳'), el('h3', '', title), el('p', '', description));
   if (action) node.append(button(label, 'button secondary', action));
@@ -58,32 +58,42 @@ function renderProjects() {
   });
   $('projects').replaceChildren(...(nodes.length ? nodes : [el('div', 'empty-projects', '还没有项目，点击 ＋ 新建。')]));
 }
-async function loadTimeline(resetMonth = false) {
-  if (!state.project) return;
-  const request = ++state.request; const id = state.project.id;
-  $('projectTitle').textContent = state.project.name;
-  $('timeline').replaceChildren(el('div', 'loading', '正在打开档案…'));
+async function loadTimeline(resetMonth = false, append = false) {
+  if (!state.project || append && state.loadingTimeline) return;
+  const request=++state.request,id=state.project.id;
+  const cursor=append?state.nextTimeline:null;
+  if(append&&!cursor)return;
+  state.loadingTimeline=true;
+  $('projectTitle').textContent=state.project.name;
+  if(!append)$('timeline').replaceChildren(el('div','loading','正在打开档案…'));
+  else document.querySelector('.timeline-load-more')?.setAttribute('disabled','');
+  const params=new URLSearchParams({project:id,limit:'100',q:$('search').value.trim(),source:$('sourceFilter').value,mode:state.mode});
+  if(state.date)params.set('date',state.date);
+  if(cursor)params.set('after',JSON.stringify(cursor));
   try {
-    const data = await api('/api/timeline?project=' + encodeURIComponent(id) + (state.date ? '&date=' + state.date : ''));
-    if (request !== state.request) return;
-    state.data = data;
-    $('projectSubtitle').textContent = data.total ? `已收录 ${data.total} 条沟通，来自 ${data.sources} 个会话。` : '把散落的对话与材料，放回事情发生的顺序。';
-    $('statMessages').textContent = data.total; $('statSources').textContent = data.sources; $('statResources').textContent = data.resources;
-    data.messages.forEach(m => state.sources.set(m.conversation, m.conversation));
-    const oldSource = $('sourceFilter').value;
-    $('sourceFilter').replaceChildren(new Option('全部会话', ''), ...[...state.sources].map(([value, name]) => new Option(name, value)));
-    $('sourceFilter').value = state.sources.has(oldSource) ? oldSource : '';
-    if (resetMonth || !state.month) state.month = (Object.keys(data.days).sort().at(-1) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })).slice(0, 7);
-    renderCalendar(); renderTimeline(); updateGuidance(); savePreferences();
-  } catch (error) { if (request === state.request) $('timeline').replaceChildren(empty('档案暂时没有打开', errorText(error), () => loadTimeline(), '重试')); }
+    const data=await api('/api/timeline?'+params);
+    if(request!==state.request)return;
+    const messages=append?[...(state.data?.messages||[]),...data.messages]:data.messages;
+    state.data={...data,messages:[...new Map(messages.map(m=>[m.id,m])).values()]};state.nextTimeline=data.next;
+    $('projectSubtitle').textContent=data.total?`已收录 ${data.total} 条沟通，来自 ${data.sources} 个会话。`:'把散落的对话与材料，放回事情发生的顺序。';
+    $('statMessages').textContent=data.total;$('statSources').textContent=data.sources;$('statResources').textContent=data.resources;
+    const oldSource=$('sourceFilter').value;
+    state.sources=new Map((data.source_options||[]).map(source=>[source.id,source.name]));
+    $('sourceFilter').replaceChildren(new Option('全部会话',''),...[...state.sources].map(([id,name])=>new Option(name,id)));
+    $('sourceFilter').value=state.sources.has(oldSource)?oldSource:'';
+    if(resetMonth||!state.month)state.month=(Object.keys(data.days).sort().at(-1)||new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'})).slice(0,7);
+    renderCalendar();renderTimeline();updateGuidance();savePreferences();
+  }catch(error){if(request===state.request){if(!append)$('timeline').replaceChildren(empty('档案暂时没有打开',errorText(error),()=>loadTimeline(),'重试'));else{toast(errorText(error));renderTimeline();}}}
+  finally{if(request===state.request)state.loadingTimeline=false;}
 }
-function filteredMessages() {
-  const query = $('search').value.trim().toLocaleLowerCase(), source = $('sourceFilter').value;
-  return (state.data?.messages || []).filter(m => (!source || m.conversation === source) &&
-    (!query || [m.text, m.title, m.sender, m.conversation, m.transcript?.text, m.quote?.sender, m.quote?.summary].join(' ').toLocaleLowerCase().includes(query)));
+function filteredMessages(){return state.data?.messages||[];}
+function appendTimelineControl(){
+  if(!state.nextTimeline)return;
+  const node=button(`加载更多 · 已显示 ${state.data.messages.length} / ${state.data.matched} 条`,'button secondary timeline-load-more',()=>loadTimeline(false,true));
+  $('timeline').append(node);
 }
 function renderTimeline() {
-  const messages = filteredMessages(); $('visibleCount').textContent = messages.length + (state.mode === 'files' ? ' 条记录' : ' 条记录');
+  const messages = filteredMessages(); $('visibleCount').textContent = '已显示 '+messages.length+' / '+(state.data?.matched??messages.length)+' 条记录';
   $('allDates').classList.toggle('active', !state.date);
   $('timelineTab').setAttribute('aria-selected', String(state.mode === 'timeline')); $('filesTab').setAttribute('aria-selected', String(state.mode === 'files'));
   if (state.mode === 'files') return renderFiles(messages);
@@ -107,7 +117,7 @@ function renderTimeline() {
     else if (message.kind !== 'text') content.append(mediaNode(message, message.attachments));
     entry.append(content); nodes.push(entry);
   }
-  $('timeline').replaceChildren(...nodes);
+  $('timeline').replaceChildren(...nodes);appendTimelineControl();
 }
 function fileNode(message, primary) {
   const name = message.title || primary?.name || kindLabel(message.kind) + (primary?.extension || '');
@@ -151,7 +161,7 @@ function mediaNode(message, assets = []) {
 }
 function renderFiles(messages) {
   const files = messages.filter(m => m.kind !== 'text' && m.kind !== 'quote' && m.attachments.length);
-  $('visibleCount').textContent = files.length + ' 份资料';
+  $('visibleCount').textContent = '已显示 '+files.length+' / '+(state.data?.matched??files.length)+' 份资料';
   if (!files.length) return $('timeline').replaceChildren(empty('还没有相关附件', '归档时，文件和媒体会随消息一起保存。'));
   const grid = el('div', 'files-grid');
   for (const message of files) {
@@ -159,7 +169,7 @@ function renderFiles(messages) {
     const footer = el('div', 'card-footer'); footer.append(el('span', '', message.sender), el('span', '', message.datetime.slice(5, 10) + ' · ' + timeLabel(message)));
     card.append(footer); grid.append(card);
   }
-  $('timeline').replaceChildren(grid);
+  $('timeline').replaceChildren(grid);appendTimelineControl();
 }
 function renderCalendar() {
   if (!state.month) return;
@@ -225,7 +235,7 @@ function renderSourceMessages() {
     const row = el('article', 'source-row' + (state.selected.has(message.id) ? ' selected' : '')); row.dataset.sourceMessage = message.id;
     const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.id = 'pick-' + message.id; checkbox.checked = state.selected.has(message.id);
     checkbox.setAttribute('aria-label', `选择${message.sender}在${timeLabel(message)}的${kindLabel(message.kind)} ${message.title || message.text.slice(0, 24)}`);
-    checkbox.addEventListener('change', () => { if (checkbox.checked) state.selected.set(message.id, { id: message.id, token: message.token, conversation: message.conversation }); else state.selected.delete(message.id); row.classList.toggle('selected', checkbox.checked); updateSelection(); });
+    checkbox.addEventListener('change', () => { if (checkbox.checked) state.selected.set(message.id, { id: message.id, token: message.token, conversation: message.conversation_id }); else state.selected.delete(message.id); row.classList.toggle('selected', checkbox.checked); updateSelection(); });
     const content = el('div'), label = el('label'); label.htmlFor = checkbox.id;
     const meta = el('div', 'entry-meta'); meta.append(el('strong', '', message.sender), el('time', '', message.datetime.slice(5, 10) + ' ' + timeLabel(message)));
     const textual = message.kind === 'text' || message.kind === 'quote';
@@ -262,13 +272,14 @@ $('projectForm').addEventListener('submit', async event => {
   catch (error) { toast(errorText(error)); } finally { submit.disabled = false; }
 });
 $('openImport').addEventListener('click', openImport); $('addNote').addEventListener('click', openNote);
-$('timelineTab').addEventListener('click', () => { state.mode = 'timeline'; renderTimeline(); savePreferences(); });
-$('filesTab').addEventListener('click', () => { state.mode = 'files'; renderTimeline(); savePreferences(); });
-$('search').addEventListener('input', renderTimeline); $('sourceFilter').addEventListener('change', renderTimeline);
+$('timelineTab').addEventListener('click', () => { state.mode = 'timeline'; loadTimeline(); savePreferences(); });
+$('filesTab').addEventListener('click', () => { state.mode = 'files'; loadTimeline(); savePreferences(); });
+let searchTimer;
+$('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadTimeline(),250);}); $('sourceFilter').addEventListener('change',()=>loadTimeline());
 $('allDates').addEventListener('click', clearDate); $('dateFilter').addEventListener('change', event => setDate(event.target.value));
 $('prevMonth').addEventListener('click', () => moveMonth(-1)); $('nextMonth').addEventListener('click', () => moveMonth(1));
 $('conversationSearch').addEventListener('input', renderConversations);
-$('selectAll').addEventListener('click', () => { const all = state.sourceMessages.every(m => state.selected.has(m.id)); state.sourceMessages.forEach(m => { if (all) state.selected.delete(m.id); else state.selected.set(m.id, { id: m.id, token: m.token, conversation: m.conversation }); }); renderSourceMessages(); updateSelection(); });
+$('selectAll').addEventListener('click', () => { const all = state.sourceMessages.every(m => state.selected.has(m.id)); state.sourceMessages.forEach(m => { if (all) state.selected.delete(m.id); else state.selected.set(m.id, { id: m.id, token: m.token, conversation: m.conversation_id }); }); renderSourceMessages(); updateSelection(); });
 $('archiveSelected').addEventListener('click', async () => {
   const node = $('archiveSelected'); node.dataset.busy='true'; $('importDialog').querySelector('.import-body').inert=true; node.disabled = true; node.textContent = '正在保存消息和附件…';
   try { const result = await api('/api/archive', { project: state.importProject.id, selections: [...state.selected.values()] });
@@ -388,7 +399,7 @@ function renderConnectionPhase(value) {
   $('checkConnection').disabled=active||pending;
   $('detectedAccounts').disabled=active||pending||state.preflight?.developer_tools_ready===false;
   $('accountLabel').disabled=active||pending;
-  const ready=state.preflight?.developer_tools_ready && state.preflight?.dependencies_ready!==false && state.preflight?.accounts.length && $('detectedAccounts').value;
+  const ready=state.preflight?.connection_supported!==false && state.preflight?.developer_tools_ready && state.preflight?.dependencies_ready!==false && state.preflight?.accounts.length && $('detectedAccounts').value;
   $('connectDesktop').disabled=active||pending||!ready;
   if(!active) $('connectDesktop').textContent=['failed','cancelled'].includes(phase)?'重新连接':state.preflight?.wechat_running?'退出微信并连接':'开始连接';
   if(phase==='connected') $('newConnectionPanel').hidden=true;
@@ -401,6 +412,7 @@ async function desktopState() {
   const value=await api('/api/desktop/state');
   const status=await api('/api/status');
   state.sourceAvailable=!!status.source_available;state.demo=!!status.demo;
+  $('archiveStorageNote').textContent=status.archive_encrypted?'加密工作区 · 当前已解锁':'普通本机工作区 · 未启用档案加密';
   state.runMode=value.mode || 'native';
   $('desktopSettings').hidden=state.demo;
   $('demoBadge').hidden=$('demoNotice').hidden=!state.demo;
@@ -437,10 +449,10 @@ async function checkConditions() {
     $('detectedAccounts').replaceChildren(new Option('登录微信后自动识别（推荐）','auto'),...labels);
     $('detectedAccounts').value=info.accounts.some(a=>a.id===previous)?previous:'auto';
     $('installDeveloperTools').hidden=info.developer_tools_ready;
-    $('developerToolsStatus').textContent=!info.developer_tools_ready?'首次连接需要 Apple 命令行工具。准备好后重新检测即可。':info.dependencies_ready===false?'需要先在终端安装读取依赖：brew install sqlcipher zstd。完成后重新检测。':!info.accounts.length?'未找到本机账号，请确认已在这台 Mac 登录过微信并允许读取本地数据。':info.wechat_running?'条件已就绪。开始时会请求正常退出微信，并在完成后自动恢复。':'条件已就绪。下一步去微信登录你要连接的账号，不需要先辨认编号。';
+    $('developerToolsStatus').textContent=info.connection_supported===false?`当前微信 ${info.wechat_version||'版本未知'}${info.wechat_build?' ('+info.wechat_build+')':''} 尚未验证首次连接。已验证版本：${(info.validated_versions||[]).join('、')}。已有档案仍可浏览。`:!info.developer_tools_ready?'首次连接需要 Apple 命令行工具。准备好后重新检测即可。':info.dependencies_ready===false?'需要先在终端安装读取依赖：brew install sqlcipher zstd。完成后重新检测。':!info.accounts.length?'未找到本机账号，请确认已在这台 Mac 登录过微信并允许读取本地数据。':info.wechat_running?'条件已就绪。开始时会请求正常退出微信，并在完成后自动恢复。':'条件已就绪。下一步去微信登录你要连接的账号，不需要先辨认编号。';
     $('detectedAccounts').disabled=!info.developer_tools_ready;
     $('connectDesktop').textContent=info.wechat_running?'退出微信并连接':'开始连接';
-    $('connectDesktop').disabled=!info.developer_tools_ready || info.dependencies_ready===false || !info.accounts.length || !$('detectedAccounts').value;
+    $('connectDesktop').disabled=info.connection_supported===false || !info.developer_tools_ready || info.dependencies_ready===false || !info.accounts.length || !$('detectedAccounts').value;
   } catch {$('developerToolsStatus').textContent='暂时无法读取本机条件，请检查微信数据访问权限。';}
 }
 $('welcomeDialog').addEventListener('close',()=>{if(state.desktop && !state.demo)api('/api/desktop/welcome',{}).catch(()=>{});});
@@ -467,7 +479,7 @@ $('connectionFile').addEventListener('change',async event=>{
   try {await api('/api/setup/import-connection',{manifest:JSON.parse(await file.text()),label:$('accountLabel').value.trim()||'本机微信'});await desktopState();toast('连接已保存到钥匙串');}
   catch(error){toast(errorText(error));}finally{event.target.value='';}
 });
-$('detectedAccounts').addEventListener('change',event=>{$('connectDesktop').disabled=!event.target.value||!state.preflight?.developer_tools_ready||state.preflight?.dependencies_ready===false||!state.preflight?.accounts.length;});
+$('detectedAccounts').addEventListener('change',event=>{$('connectDesktop').disabled=!event.target.value||!state.preflight?.developer_tools_ready||state.preflight?.dependencies_ready===false||!state.preflight?.accounts.length||state.preflight?.connection_supported===false;});
 $('connectDesktop').addEventListener('click',async()=>{
   $('connectDesktop').disabled=true;$('confirmedAccountLabel').value='';
   try {const route=state.runMode==='source'?'/api/setup/connect':'/api/desktop/connect';await api(route,{account:$('detectedAccounts').value,label:$('accountLabel').value.trim()||'微信账号',quit_running:!!state.preflight?.wechat_running});await desktopState();}

@@ -171,13 +171,15 @@ class DesktopSession(unittest.TestCase):
         from chronicle.workbench import mac_modules
         mac_modules()
         from chronicle.macos.core import CipherDatabase
-        root=Path(self.temporary.name)/'artificial-account/db_storage'
+        root=Path(self.temporary.name)/'wxid_fixtureA_0000/db_storage'
         entries=[]
         key='12'*32
         for name,sql in [('contact/contact.db','CREATE TABLE contact (username TEXT,nick_name TEXT,remark TEXT,alias TEXT)'),
                          ('session/session.db','CREATE TABLE SessionTable (username TEXT,last_timestamp INTEGER)')]:
             path=root/name;path.parent.mkdir(parents=True,exist_ok=True)
-            with CipherDatabase(path,key,fixture_write=True) as database:database.query(sql)
+            with CipherDatabase(path,key,fixture_write=True) as database:
+                database.query(sql)
+                if name.startswith('contact/'):database.query("INSERT INTO contact VALUES ('wxid_fixtureA','人工账号','','')")
             entries.append({'root':str(root.resolve()),'database':name,'raw_key':key,'salt':path.read_bytes()[:16].hex()})
         selected=Path(self.temporary.name)/'selected-connection.json'
         selected.write_text(json.dumps({'databases':entries}))
