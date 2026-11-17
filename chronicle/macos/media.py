@@ -72,6 +72,7 @@ def key_candidates(source):
     normalized = (re.match(r'^(wxid_[^_]+)', account).group(1) if account.startswith('wxid_')
                   else re.sub(r'_[A-Za-z0-9]{4}$', '', account))
     identities = {account, normalized}
+    if getattr(source,'principal',None):identities.add(source.principal)
     app_data = source.root.parent.parent.parent / 'app_data'
     codes = set()
     for relative in ('net/kvcomm', 'ilink/kvcomm'):

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from media import aes_ecb, decrypt_dat, plaintext_variants, resource_links, collect_visual, probe_file, wxgf_preview
+from media import key_candidates, aes_ecb, decrypt_dat, plaintext_variants, resource_links, collect_visual, probe_file, wxgf_preview
 
 
 def container(plaintext, key, xor, head_length=32, tail_length=7):
@@ -23,6 +23,15 @@ def container(plaintext, key, xor, head_length=32, tail_length=7):
 
 
 class ImageCipher(unittest.TestCase):
+    def test_relocated_account_uses_verified_principal_for_media_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/'client/accounts/renamed/db_storage';root.mkdir(parents=True)
+            hints=root.parent.parent.parent/'app_data/net/kvcomm';hints.mkdir(parents=True)
+            (hints/'key_123_fixture.statistic').write_bytes(b'')
+            source=SimpleNamespace(root=root,principal='wxid_fixtureA')
+            expected=hashlib.md5(b'123wxid_fixtureA').hexdigest()[:16].encode()
+            self.assertIn((expected,123),list(key_candidates(source)))
+
     def test_nist_aes_block(self):
         key = bytes.fromhex('000102030405060708090a0b0c0d0e0f')
         plain = bytes.fromhex('00112233445566778899aabbccddeeff')
