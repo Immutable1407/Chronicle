@@ -67,6 +67,17 @@ class AccountMigration(unittest.TestCase):
         self.assertEqual(self.archive.resolve_message(first['archive_identity']),second['archive_identity'])
         self.assertEqual(self.archive.db.execute('PRAGMA foreign_key_check').fetchall(),[])
 
+    def test_verified_source_status_binds_legacy_account_before_new_imports(self):
+        from types import SimpleNamespace
+        from chronicle.workbench import Workbench
+        row=message(18);self.archive.import_messages(self.project,bundle(row))
+        app=Workbench(self.root/'archive',self.root/'cache')
+        app.source=lambda:SimpleNamespace(account='b'*64,identity_aliases=['a'*64],identity_scheme='wechat-internal-user-v1',conversations=lambda:[])
+        try:self.assertTrue(app.status()['source_available'])
+        finally:app.close()
+        self.assertEqual(self.archive.timeline(self.project)[0]['account'],'b'*64)
+        self.assertEqual(self.archive.timeline(self.project)[0]['id'],row['archive_identity'])
+
     def test_bad_legacy_payload_rolls_back_binding(self):
         row=message(8);self.archive.import_messages(self.project,bundle(row))
         with self.archive.db:self.archive.db.execute("UPDATE messages SET raw_json='{}'")

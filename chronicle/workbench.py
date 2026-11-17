@@ -123,6 +123,9 @@ class Workbench:
         try:
             source = self.source()
             conversations = source.conversations()
+            if getattr(source,'identity_aliases',None):
+                with self.lock:
+                    with Archive(self.archive_root) as archive:self.bind_source(archive,source)
             ready=getattr(source,'identity_scheme',None)!='legacy-path-v1'
             return {'source_available':ready,'conversation_count':len(conversations),'identity_ready':ready}
         except Exception:
